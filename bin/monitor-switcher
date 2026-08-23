@@ -1,0 +1,512 @@
+#!/usr/bin/env bash
+# monitor-switcher — persistent monitor switcher for Omarchy/Hyprland.
+#
+# Toggle monitors off/on with layout memory: enabled monitors pack
+# left-to-right in config order (or sit at explicit positions), each with its
+# own scale/mode/transform. Every layout is validated for overlaps before it
+# is applied — a colliding layout is refused and the current one kept.
+#
+# Unlike `hyprctl keyword monitor X,disable` (runtime-only — reverted by any
+# hyprctl reload, including the monitor-watch daemon's modeless-recovery
+# loop), state is applied through a generated Lua file in Omarchy's toggle
+# directory, which every reload re-sources — so off-states survive reloads,
+# reboots, and the watcher daemon.
+#
+# Usage:
+#   monitor-switcher state [--json]   Merged config + live state (+ overlap warnings)
+#   monitor-switcher plan [--json]    Computed layout boxes (no changes)
+#   monitor-switcher toggle <id>      Toggle monitor (id = output or alias)
+#   monitor-switcher enable <id>      Enable monitor
+#   monitor-switcher disable <id>     Disable monitor
+#   monitor-switcher move <id> <XxY>  Pin monitor to an explicit position
+#   monitor-switcher move <id> <left-of|right-of|above|below> <id2>
+#   monitor-switcher swap <a> <b>     Exchange two monitors' places in the pack order
+#   monitor-switcher pack             Clear all pinned positions; re-pack left-to-right
+#   monitor-switcher apply            Regenerate layout from config + reload
+#
+# Files:
+#   ~/.config/monitor-switcher/config.json     settings (edit freely)
+#   ~/.local/state/monitor-switcher/state.json runtime state (which are off)
+#   ~/.local/state/omarchy/toggles/hypr/monitor-switcher.lua  (GENERATED)
+
+set -euo pipefail
+
+CONFIG_DIR="$HOME/.config/monitor-switcher"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+STATE_DIR="$HOME/.local/state/monitor-switcher"
+STATE_FILE="$STATE_DIR/state.json"
+TOGGLES_DIR="$HOME/.local/state/omarchy/toggles/hypr"
+GENERATED_FILE="$TOGGLES_DIR/monitor-switcher.lua"
+
+die() { echo "monitor-switcher: $*" >&2; exit 1; }
+
+# hyprctl can answer empty, partial, or mid-transition while the compositor
+# is busy re-enumerating outputs (reloads, physical hotplug, the watcher's
+# modeless-recovery loop). Callers write files derived from this data, so a
+# bad answer must never pass through: require a complete answer (every
+# enabled monitor has a real mode) that is identical across two reads
+# (geometry settled), else keep retrying briefly.
+live() {
+  local out ok geom prev_geom="" i
+  for i in $(seq 1 10); do
+    if out=$(hyprctl monitors all -j 2> /dev/null) && [[ -n $out ]]; then
+      ok=$(jq -r '
+        if (type == "array" and length > 0
+            and all(.[]; .disabled == true or ((.width // 0) > 0 and (.height // 0) > 0)))
+        then "ok" else "bad" end' <<<"$out" 2> /dev/null) || ok=""
+      if [[ $ok == ok ]]; then
+        if geom=$(jq -c '[.[] | {name, disabled, width, height, transform}] | sort_by(.name)' <<<"$out"); then
+          if [[ -n $prev_geom && $geom == "$prev_geom" ]]; then
+            printf '%s\n' "$out"
+            return 0
+          fi
+          prev_geom=$geom
+        fi
+      fi
+    fi
+    sleep 0.3
+  done
+  die "hyprctl monitor data did not settle (compositor busy?)"
+}
+
+read_state() {
+  if [[ -f $STATE_FILE ]]; then cat "$STATE_FILE"; else printf '{"disabled":[]}\n'; fi
+}
+
+is_disabled() { # <output>
+  read_state | jq -e --arg o "$1" '.disabled | index($o) != null' > /dev/null
+}
+
+set_disabled() { # <output> <true|false>
+  local op
+  mkdir -p "$STATE_DIR"
+  if [[ $2 == true ]]; then
+    op='.disabled = (.disabled + [$o] | unique)'
+  else
+    op='.disabled -= [$o]'
+  fi
+  read_state | jq --arg o "$1" "$op" > "$STATE_FILE.tmp"
+  mv "$STATE_FILE.tmp" "$STATE_FILE"
+}
+
+# Create a config from the current live setup, ordered left-to-right.
+seed_config() {
+  mkdir -p "$CONFIG_DIR"
+  local seeded
+  seeded=$(live | jq '
+    sort_by(.x)
+    | map({
+        output: .name,
+        alias: (.model // .name),
+        scale: .scale,
+        mode: "preferred",
+        transform: (.transform // 0),
+        mode_w: .width,
+        mode_h: .height
+      })
+  ') || die "could not seed config from live state"
+  # Build-then-write: a redirect inside the pipeline would truncate
+  # $CONFIG_FILE even when the producer fails.
+  [[ -n $seeded ]] || die "could not seed config from live state"
+  printf '%s\n' "$seeded" > "$CONFIG_FILE"
+  echo "monitor-switcher: created $CONFIG_FILE from current setup" >&2
+}
+
+# Resolve an output name or (case-insensitive) alias to an output name.
+resolve() { # <id>
+  jq -r --arg id "$1" '
+    .[] | select(.output == $id or ((.alias // "") | ascii_downcase) == ($id | ascii_downcase))
+    | .output
+  ' "$CONFIG_FILE" | head -1
+}
+
+# Config plus any connected-but-unlisted monitors appended (rightmost).
+adopt_new() { # <live-json>
+  jq --argjson lv "$1" '
+    . as $cfg
+    | $cfg + [
+        $lv[]
+        | .name as $n
+        | select([$cfg[].output] | index($n) == null)
+        | { output: .name, alias: (.model // .name), scale: .scale,
+            mode: "preferred", transform: (.transform // 0),
+            mode_w: .width, mode_h: .height }
+      ]
+  ' "$CONFIG_FILE"
+}
+
+# Backfill mode_w/mode_h for legacy entries: "preferred"-mode monitors added
+# before geometry snapshots existed. Geometry math below reads the CONFIGURED
+# mode, never the transient live mode, so layouts don't shift when a monitor
+# is briefly running a fallback resolution during re-enumeration.
+backfill_geometry() { # <cfg-json> <live-json>
+  jq --argjson lv "$2" '
+    map(
+      if ((.mode // "preferred") == "preferred") and (((.mode_w // 0) <= 0) or ((.mode_h // 0) <= 0)) then
+        (. as $c | [$lv[] | select(.name == $c.output)][0] // null) as $m
+        | if ($m != null) and (($m.width // 0) > 0) then
+            . + { mode_w: $m.width, mode_h: $m.height }
+          else . end
+      else . end
+      | if (.mode // "preferred") != "preferred" then del(.mode_w, .mode_h) else . end
+    )
+  ' <<<"$1"
+}
+
+# The one place layout geometry is computed. Positions come from the config's
+# explicit "position" when present, else pack left-to-right (y=0) in config
+# order, continuing rightward from the previous monitor's right edge. Sizes
+# come from the configured mode (explicit "WxH@R" parsed; "preferred" uses
+# the snapshotted mode_w/mode_h; last resort the settle-checked live mode),
+# divided by scale, axes swapped for odd (90°/270°) transforms — the same
+# rounding Hyprland uses. Output: JSON array of {output, x, y, w, h} in
+# logical pixels, one box per connected + enabled config entry.
+layout_boxes() { # <cfg-json> <live-json>
+  jq -n --argjson cfg "$1" --argjson lv "$2" --argjson dis "$(read_state | jq -c '.disabled // []')" '
+    def msize($c; $m):
+      ($c.mode // "preferred") as $mode
+      | if ($mode | test("^[0-9]+x[0-9]+")) then
+          ($mode | capture("^(?<w>[0-9]+)x(?<h>[0-9]+)")) | [(.w | tonumber), (.h | tonumber)]
+        elif (($c.mode_w // 0) > 0 and (($c.mode_h // 0) > 0)) then
+          [$c.mode_w, $c.mode_h]
+        else
+          [($m.width // 0), ($m.height // 0)]
+        end;
+    def lsz($w; $h; $s; $t):
+      (if (($t % 2) == 1) then [$h, $w] else [$w, $h] end) as $d
+      | [((($d[0] / $s) + 0.5) | floor), ((($d[1] / $s) + 0.5) | floor)];
+    [ foreach $cfg[] as $c ({cursor: 0};
+        . as $acc
+        | ([$lv[] | select(.name == $c.output)][0] // null) as $m
+        | (if ($m == null) or (($dis | index($c.output)) != null) then null
+           else
+             (msize($c; $m)) as $ms
+             | if ($ms[0] > 0 and $ms[1] > 0) then
+                 (lsz($ms[0]; $ms[1]; ($c.scale // 1); ($c.transform // 0))) as $ls
+                 | (if (($c.position // "") | test("^-?[0-9]+x-?[0-9]+$")) then
+                      ($c.position | capture("^(?<px>-?[0-9]+)x(?<py>-?[0-9]+)$")) | [(.px | tonumber), (.py | tonumber)]
+                    else [$acc.cursor, 0] end) as $p
+                 | {output: $c.output, x: $p[0], y: $p[1], w: $ls[0], h: $ls[1]}
+               else null end
+           end) as $box
+        | {cursor: (if $box == null then $acc.cursor else ($box.x + $box.w) end), box: $box};
+        .box // empty) ]
+  '
+}
+
+# First collision in a box set, "A overlaps B; ...", or empty. AABB overlap:
+# rectangles intersect iff each is left-of/below the other's far edge on both
+# axes. Touching edges (x == other.x + other.w) is fine — that's packing.
+# jq's combinations(n) is a cartesian product WITH replacement (yields self
+# pairs and both orderings) — the output< filter keeps unique unordered pairs.
+find_overlap() { # <boxes-json>
+  jq -r '[combinations(2)
+          | select(.[0].output < .[1].output)
+          | select(.[0].x < .[1].x + .[1].w and .[1].x < .[0].x + .[0].w
+                   and .[0].y < .[1].y + .[1].h and .[1].y < .[0].y + .[0].h)
+          | "\(.[0].output) overlaps \(.[1].output)"]
+         | join("; ")' <<<"$1"
+}
+
+# Regenerate the layout file from config + state and reload Hyprland.
+apply() {
+  [[ -s $CONFIG_FILE ]] || seed_config
+  local lv cfg boxes collision
+  lv=$(live)
+  cfg=$(adopt_new "$lv")
+  cfg=$(backfill_geometry "$cfg" "$lv")
+  # Never overwrite the user's config with an empty derivation.
+  [[ -n $cfg ]] || die "config derivation came back empty; $CONFIG_FILE left untouched"
+  printf '%s\n' "$cfg" > "$CONFIG_FILE"
+
+  boxes=$(layout_boxes "$cfg" "$lv")
+  # Overlap pre-flight: Hyprland answers an overlapping layout with
+  # "Monitor X overlaps with other monitor(s)" and auto-places on top of our
+  # rules. Refuse instead, and keep the last known-good generated file.
+  collision=$(find_overlap "$boxes")
+  [[ -z $collision ]] || die "refusing to apply overlapping layout: $collision (fix with 'monitor-switcher move' or 'pack'; current layout unchanged)"
+
+  mkdir -p "$TOGGLES_DIR"
+  # Build the whole file before writing it: a redirect around the loop would
+  # leave a truncated layout behind if any jq call failed midway, and the
+  # reload below would then source it.
+  local entry output live_entry mode scale transform box px py
+  local generated="-- GENERATED by monitor-switcher — do not edit.
+-- Edit $CONFIG_FILE instead, then run: monitor-switcher apply"
+  while read -r entry; do
+    output=$(jq -r '.output' <<<"$entry")
+    live_entry=$(jq -c --arg o "$output" '[.[] | select(.name == $o)][0] // empty' <<<"$lv")
+    [[ -n $live_entry ]] || continue # not connected; keep settings, skip layout
+    if is_disabled "$output"; then
+      generated+=$(printf '\nhl.monitor({ output = "%s", disabled = true })' "$output")
+      continue
+    fi
+    box=$(jq -c --arg o "$output" '[.[] | select(.output == $o)][0] // empty' <<<"$boxes")
+    [[ -n $box ]] || continue # no computed box; skip rather than misplace
+    mode=$(jq -r '.mode // "preferred"' <<<"$entry")
+    scale=$(jq -r '.scale // 1' <<<"$entry")
+    transform=$(jq -r '.transform // 0' <<<"$entry")
+    px=$(jq -r '.x' <<<"$box")
+    py=$(jq -r '.y' <<<"$box")
+    generated+=$(printf '\nhl.monitor({ output = "%s", mode = "%s", position = "%sx%s", scale = %s, transform = %s })' \
+      "$output" "$mode" "$px" "$py" "$scale" "$transform")
+  done < <(jq -c '.[]' <<<"$cfg")
+  printf '%s\n' "$generated" > "$GENERATED_FILE"
+
+  hyprctl reload > /dev/null
+}
+
+state_json() {
+  [[ -s $CONFIG_FILE ]] || seed_config
+  local lv cfg
+  lv=$(live)
+  cfg=$(adopt_new "$lv")
+  cfg=$(backfill_geometry "$cfg" "$lv")
+  [[ -n $cfg ]] || die "config derivation came back empty; $CONFIG_FILE left untouched"
+  printf '%s\n' "$cfg" > "$CONFIG_FILE"
+  jq -n --argjson cfg "$cfg" --argjson lv "$lv" --argjson st "$(read_state)" '
+    # Physical diagonal in inches from EDID-reported mm (0 = unknown).
+    def inches_of($m):
+      (($m.physicalWidth // 0) * ($m.physicalWidth // 0)
+       + ($m.physicalHeight // 0) * ($m.physicalHeight // 0))
+      | if . > 0 then (sqrt / 25.4 | round) else 0 end;
+    # Display class for icon choice: internal panel, ultrawide (pixel aspect),
+    # TV-sized (>= 38"), else a regular desktop monitor.
+    def kind_of($m; $in):
+      if ($m.name | test("^(eDP|LVDS|DSI)-")) then "laptop"
+      elif (($m.width // 0) / ([$m.height // 0, 1] | max)) >= 2.3 then "ultrawide"
+      elif $in >= 38 then "tv"
+      else "monitor" end;
+    # Logical on-screen size of a live monitor (axes swapped when rotated).
+    def lsz($m):
+      (if ((($m.transform // 0) % 2) == 1) then [($m.height // 0), ($m.width // 0)]
+       else [($m.width // 0), ($m.height // 0)] end) as $d
+      | [((($d[0] / ($m.scale // 1)) + 0.5) | floor), ((($d[1] / ($m.scale // 1)) + 0.5) | floor)];
+    [$cfg[] | . as $c
+      | ([$lv[] | select(.name == $c.output)][0] // null) as $m
+      | (if $m != null then inches_of($m) else 0 end) as $in
+      | {
+          output: $c.output,
+          alias: ($c.alias // $c.output),
+          scale: ($c.scale // 1),
+          mode: ($c.mode // "preferred"),
+          position: ($c.position // null),
+          connected: ($m != null),
+          enabled: (($m != null) and ($m.disabled != true)
+                    and ([$st.disabled[] | select(. == $c.output)] | length == 0)),
+          focused: (($m.focused == true) and ($m.disabled != true)),
+          x: (if $m != null then ($m.x // 0) else 0 end),
+          y: (if $m != null then ($m.y // 0) else 0 end),
+          width: ($m.width // 0),
+          height: ($m.height // 0),
+          inches: $in,
+          kind: (if $m != null then kind_of($m; $in) else "monitor" end)
+        }
+    ] as $monitors
+    # Live overlap check (enabled, non-mirrored monitors only): mirrors share
+    # the geometry of their target by design, disabled ones take no space.
+    | ([ $lv[] | select((.disabled != true) and ((.mirrorOf // "none") == "none"))
+         | . as $m | (lsz($m)) as $s
+         | {output: $m.name, x: ($m.x // 0), y: ($m.y // 0), w: $s[0], h: $s[1]} ]) as $boxes
+    | { monitors: $monitors,
+        enabledCount: ([$monitors[] | select(.enabled)] | length),
+        overlaps: ([$boxes | combinations(2)
+                    | select(.[0].output < .[1].output)
+                    | select(.[0].x < .[1].x + .[1].w and .[1].x < .[0].x + .[0].w
+                             and .[0].y < .[1].y + .[1].h and .[1].y < .[0].y + .[0].h)
+                    | "\(.[0].output) overlaps \(.[1].output)"]) }
+  '
+}
+
+state_human() {
+  state_json | jq -r '
+    (.monitors[]
+      | .output + "\t" + .alias + "\t"
+      + (if .connected then (if .enabled then "on" else "off" end) else "unplugged" end)
+      + "\t" + (.width | tostring) + "x" + (.height | tostring)
+      + " @" + (.scale | tostring) + "x"
+      + (if .connected then "\t" + (.x | tostring) + "x" + (.y | tostring) else "" end)),
+    (.overlaps[]? | "WARNING: layout overlap: " + .)
+  '
+}
+
+cmd_toggle() { # <id> <on|off|toggle>
+  [[ -s $CONFIG_FILE ]] || seed_config
+  local id="$1" action="$2" output
+  output=$(resolve "$id")
+  [[ -n $output ]] || die "unknown monitor: $id (not an output or alias in $CONFIG_FILE)"
+
+  local lv
+  lv=$(live)
+  jq -e --arg o "$output" 'any(.[]; .name == $o)' <<<"$lv" > /dev/null \
+    || die "$output is not connected"
+
+  local currently next
+  if is_disabled "$output"; then currently=off; else currently=on; fi
+  case $action in
+    toggle) [[ $currently == on ]] && next=off || next=on ;;
+    on)  next=on ;;
+    off) next=off ;;
+  esac
+
+  if [[ $next == off && $currently == on ]]; then
+    # Never kill the last enabled, connected display.
+    local enabled_others=0 name
+    while read -r name; do
+      if [[ $name != "$output" ]] \
+         && jq -e --arg n "$name" '.[] | select(.name == $n and (.disabled != true))' <<<"$lv" > /dev/null \
+         && ! is_disabled "$name"; then
+        enabled_others=$((enabled_others + 1))
+      fi
+    done < <(jq -r '.[].output' "$CONFIG_FILE")
+    [[ $enabled_others -gt 0 ]] || die "refusing to disable the last active display"
+  fi
+
+  if [[ $next == off ]]; then set_disabled "$output" true; else set_disabled "$output" false; fi
+  # Subshell: die inside apply exits the subshell, not us — rollback runs.
+  if ! (apply); then
+    # apply refused the layout (its message says why): state.json must not
+    # claim a change that never happened — roll the flag back.
+    if [[ $next == off ]]; then set_disabled "$output" false; else set_disabled "$output" true; fi
+    die "toggle failed; state left unchanged"
+  fi
+
+  local alias
+  alias=$(jq -r --arg o "$output" '.[] | select(.output == $o) | (.alias // .output)' "$CONFIG_FILE")
+  if [[ $next == off ]]; then
+    echo "$alias ($output) off"
+  else
+    echo "$alias ($output) on"
+  fi
+}
+
+# Shared preamble for the position-editing verbs: settle live state, adopt +
+# backfill, persist — so resolve() and layout_boxes() see the same config
+# apply() will.
+prepare() {
+  [[ -s $CONFIG_FILE ]] || seed_config
+  local lv cfg
+  lv=$(live)
+  cfg=$(adopt_new "$lv")
+  cfg=$(backfill_geometry "$cfg" "$lv")
+  [[ -n $cfg ]] || die "config derivation came back empty; $CONFIG_FILE left untouched"
+  printf '%s\n' "$cfg" > "$CONFIG_FILE"
+  printf '%s\n' "$lv"
+}
+
+cmd_move() { # <id> <XxY|left-of|right-of|above|below> [ref-id]
+  local id="$1" what="$2" ref="${3:-}" lv output pos
+  lv=$(prepare)
+  output=$(resolve "$id")
+  [[ -n $output ]] || die "unknown monitor: $id (not an output or alias in $CONFIG_FILE)"
+
+  if [[ $what =~ ^-?[0-9]+x-?[0-9]+$ ]]; then
+    pos="$what"
+  else
+    [[ -n $ref ]] || die "move $what needs a reference monitor: move $id $what <id2>"
+    local refout boxes mine theirs
+    refout=$(resolve "$ref")
+    [[ -n $refout ]] || die "unknown monitor: $ref (not an output or alias in $CONFIG_FILE)"
+    [[ $refout != "$output" ]] || die "cannot move $output relative to itself"
+    boxes=$(layout_boxes "$(cat "$CONFIG_FILE")" "$lv")
+    mine=$(jq -c --arg o "$output" '[.[] | select(.output == $o)][0] // empty' <<<"$boxes")
+    theirs=$(jq -c --arg o "$refout" '[.[] | select(.output == $o)][0] // empty' <<<"$boxes")
+    [[ -n $mine && -n $theirs ]] || die "both monitors must be connected and enabled for relative moves"
+    case $what in
+      right-of) pos=$(jq -r '"\(.x + .w)x\(.y)"' <<<"$theirs") ;;
+      left-of)  pos=$(jq -r --argjson m "$mine" '"\(.x - $m.w)x\(.y)"' <<<"$theirs") ;;
+      above)    pos=$(jq -r --argjson m "$mine" '"\(.x)x\(.y - $m.h)"' <<<"$theirs") ;;
+      below)    pos=$(jq -r '"\(.x)x\(.y + .h)"' <<<"$theirs") ;;
+      *) die "unknown direction: $what (want XxY, left-of, right-of, above, below)" ;;
+    esac
+  fi
+
+  local backup newcfg alias
+  backup=$(cat "$CONFIG_FILE")
+  newcfg=$(jq --arg o "$output" --arg p "$pos" \
+    'map(if .output == $o then . + {position: $p} else . end)' <<<"$backup")
+  printf '%s\n' "$newcfg" > "$CONFIG_FILE"
+  # Subshell: die inside apply exits the subshell, not us — rollback runs.
+  if ! (apply); then
+    printf '%s\n' "$backup" > "$CONFIG_FILE"
+    die "move reverted; config and layout unchanged"
+  fi
+  alias=$(jq -r --arg o "$output" '.[] | select(.output == $o) | (.alias // .output)' "$CONFIG_FILE")
+  echo "$alias ($output) at $pos"
+}
+
+cmd_swap() { # <a> <b>
+  # Exchange two monitors' places in the packing order and drop any pinned
+  # positions on both: the pair re-packs, which cannot overlap by
+  # construction. (Exchanging raw origins would overlap whenever the two
+  # logical widths differ.)
+  local lv oa ob backup newcfg
+  lv=$(prepare)
+  oa=$(resolve "$1")
+  [[ -n $oa ]] || die "unknown monitor: $1 (not an output or alias in $CONFIG_FILE)"
+  ob=$(resolve "$2")
+  [[ -n $ob ]] || die "unknown monitor: $2 (not an output or alias in $CONFIG_FILE)"
+  [[ $oa != "$ob" ]] || die "cannot swap $oa with itself"
+
+  backup=$(cat "$CONFIG_FILE")
+  newcfg=$(jq --arg oa "$oa" --arg ob "$ob" '
+    (map(.output) | index($oa)) as $ia
+    | (map(.output) | index($ob)) as $ib
+    | .[$ia] as $a | .[$ib] as $b
+    | .[$ia] = ($b | del(.position)) | .[$ib] = ($a | del(.position))' <<<"$backup")
+  printf '%s\n' "$newcfg" > "$CONFIG_FILE"
+  # Subshell: die inside apply exits the subshell, not us — rollback runs.
+  if ! (apply); then
+    printf '%s\n' "$backup" > "$CONFIG_FILE"
+    die "swap reverted; config and layout unchanged"
+  fi
+  echo "swapped $oa and $ob in the packing order (pins cleared; 'move' to re-pin)"
+}
+
+cmd_pack() {
+  local backup cfg
+  [[ -s $CONFIG_FILE ]] || seed_config
+  backup=$(cat "$CONFIG_FILE")
+  cfg=$(jq 'map(del(.position))' <<<"$backup")
+  printf '%s\n' "$cfg" > "$CONFIG_FILE"
+  # Subshell: die inside apply exits the subshell, not us — rollback runs.
+  if ! (apply); then
+    printf '%s\n' "$backup" > "$CONFIG_FILE"
+    die "pack reverted; config and layout unchanged"
+  fi
+  echo "positions cleared; monitors pack left-to-right in config order"
+}
+
+cmd_plan() { # [--json]
+  local lv boxes collision
+  lv=$(prepare)
+  boxes=$(layout_boxes "$(cat "$CONFIG_FILE")" "$lv")
+  if [[ ${1:-} == --json ]]; then
+    jq '.' <<<"$boxes"
+    return
+  fi
+  jq -r '.[] | .output + "\t" + (.x | tostring) + "x" + (.y | tostring)
+         + "\t" + (.w | tostring) + "x" + (.h | tostring) + " logical"' <<<"$boxes"
+  collision=$(find_overlap "$boxes")
+  [[ -z $collision ]] || echo "WARNING: layout would overlap: $collision" >&2
+}
+
+usage() {
+  sed -n '13,30p' "$0" | sed 's/^# \{0,1\}//'
+  exit 1
+}
+
+case "${1:-}" in
+  state)
+    if [[ "${2:-}" == "--json" ]]; then state_json; else state_human; fi
+    ;;
+  plan)    cmd_plan "${2:-}" ;;
+  toggle)  [[ $# -eq 2 ]] || usage; cmd_toggle "$2" toggle ;;
+  enable)  [[ $# -eq 2 ]] || usage; cmd_toggle "$2" on ;;
+  disable) [[ $# -eq 2 ]] || usage; cmd_toggle "$2" off ;;
+  move)    [[ $# -ge 3 && $# -le 4 ]] || usage; cmd_move "$2" "$3" "${4:-}" ;;
+  swap)    [[ $# -eq 3 ]] || usage; cmd_swap "$2" "$3" ;;
+  pack)    cmd_pack ;;
+  apply)   apply ;;
+  *)       usage ;;
+esac
