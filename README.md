@@ -41,6 +41,13 @@ Monitor Switcher closes that gap:
 - **Zero feature loss** — the built-in widget's full feature set
   (brightness, text size, scale) with real toggles on top
 
+And switching deserves a keyboard home. Omarchy ships no keybind to power an
+external display on or off, so display rows are **numbered 1…N
+left-to-right** and the CLI answers `toggle 1`…`toggle N` — bind
+`SUPER+SHIFT+CTRL+1…N` (a combo Omarchy leaves unclaimed) and every panel on
+your desk is one keystroke away, listed in the `SUPER+K` keybindings sheet
+like a first-party shortcut.
+
 ### Who it's for
 
 - **Desktop users with two or more external monitors** — the audience the
@@ -135,7 +142,7 @@ Scrolling the bar glyph adjusts brightness.
 ```bash
 monitor-switcher state            # table of monitors (+ overlap warnings)
 monitor-switcher state --json     # machine-readable
-monitor-switcher toggle MSI       # by alias or output name (toggle DP-3)
+monitor-switcher toggle MSI       # alias, output name, or number: toggle 2
 monitor-switcher disable DP-2
 monitor-switcher enable LG
 monitor-switcher apply            # re-apply layout from config
@@ -162,11 +169,21 @@ hotplug — and rotation (odd transforms) is accounted for.
 your plugin id differs):
 
 ```lua
-o.bind("SUPER + SHIFT + CTRL + 1", "Toggle MSI monitor",
-  "/home/USER/.config/omarchy/plugins/case.monitor-switcher/bin/monitor-switcher toggle MSI")
+-- 1/2/3 = left/center/right in the pack order — numbers are allocated
+-- automatically, need no aliases, and survive output renumbering.
+o.bind("SUPER + SHIFT + CTRL + 1", "Toggle display 1",
+  "/home/USER/.config/omarchy/plugins/case.monitor-switcher/bin/monitor-switcher toggle 1")
+o.bind("SUPER + SHIFT + CTRL + 2", "Toggle display 2",
+  "/home/USER/.config/omarchy/plugins/case.monitor-switcher/bin/monitor-switcher toggle 2")
+o.bind("SUPER + SHIFT + CTRL + 3", "Toggle display 3",
+  "/home/USER/.config/omarchy/plugins/case.monitor-switcher/bin/monitor-switcher toggle 3")
 ```
 
-Aliases make binds survive output renumbering (DP-1 ↔ DP-3 shuffling).
+`SUPER+SHIFT+CTRL+<number>` is unclaimed by Omarchy defaults, and because
+the binds carry descriptions they show up in Omarchy's `SUPER+K`
+keybindings sheet like first-party shortcuts. Prefer names? Aliases work
+everywhere numbers do (`toggle MSI`) and likewise survive renumbering
+(DP-1 ↔ DP-3 shuffling).
 
 **IPC:** the panel answers on its own target, e.g.
 `omarchy-shell case.monitor-switcher state` (brightness, focused monitor,

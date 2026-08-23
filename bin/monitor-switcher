@@ -15,7 +15,7 @@
 # Usage:
 #   monitor-switcher state [--json]   Merged config + live state (+ overlap warnings)
 #   monitor-switcher plan [--json]    Computed layout boxes (no changes)
-#   monitor-switcher toggle <id>      Toggle monitor (id = output or alias)
+#   monitor-switcher toggle <id>      Toggle monitor
 #   monitor-switcher enable <id>      Enable monitor
 #   monitor-switcher disable <id>     Disable monitor
 #   monitor-switcher move <id> <XxY>  Pin monitor to an explicit position
@@ -23,6 +23,11 @@
 #   monitor-switcher swap <a> <b>     Exchange two monitors' places in the pack order
 #   monitor-switcher pack             Clear all pinned positions; re-pack left-to-right
 #   monitor-switcher apply            Regenerate layout from config + reload
+#
+#   <id> = output name (DP-3), alias (MSI), or number — the monitor's place
+#   in the pack order, left-to-right (toggle 2). Numbers need no aliases and
+#   survive output renumbering, so they suit generic keybinds:
+#   SUPER+SHIFT+CTRL+1..N → toggle 1..N.
 #
 # Files:
 #   ~/.config/monitor-switcher/config.json     settings (edit freely)
@@ -112,8 +117,14 @@ seed_config() {
   echo "monitor-switcher: created $CONFIG_FILE from current setup" >&2
 }
 
-# Resolve an output name or (case-insensitive) alias to an output name.
+# Resolve an id to an output name. Ids: an output name, a case-insensitive
+# alias, or a bare number — the 1-based place in config order (left-to-right
+# pack order), so `toggle 2` needs no alias and survives output renumbering.
 resolve() { # <id>
+  if [[ $1 =~ ^[0-9]+$ ]]; then
+    jq -r --argjson n "$1" '.[$n - 1].output // empty' "$CONFIG_FILE"
+    return
+  fi
   jq -r --arg id "$1" '
     .[] | select(.output == $id or ((.alias // "") | ascii_downcase) == ($id | ascii_downcase))
     | .output
@@ -282,10 +293,11 @@ state_json() {
       (if ((($m.transform // 0) % 2) == 1) then [($m.height // 0), ($m.width // 0)]
        else [($m.width // 0), ($m.height // 0)] end) as $d
       | [((($d[0] / ($m.scale // 1)) + 0.5) | floor), ((($d[1] / ($m.scale // 1)) + 0.5) | floor)];
-    [$cfg[] | . as $c
+    [$cfg | to_entries[] | .key as $i | .value as $c
       | ([$lv[] | select(.name == $c.output)][0] // null) as $m
       | (if $m != null then inches_of($m) else 0 end) as $in
       | {
+          num: ($i + 1),
           output: $c.output,
           alias: ($c.alias // $c.output),
           scale: ($c.scale // 1),
@@ -321,7 +333,7 @@ state_json() {
 state_human() {
   state_json | jq -r '
     (.monitors[]
-      | .output + "\t" + .alias + "\t"
+      | (.num | tostring) + "\t" + .output + "\t" + .alias + "\t"
       + (if .connected then (if .enabled then "on" else "off" end) else "unplugged" end)
       + "\t" + (.width | tostring) + "x" + (.height | tostring)
       + " @" + (.scale | tostring) + "x"
@@ -334,7 +346,7 @@ cmd_toggle() { # <id> <on|off|toggle>
   [[ -s $CONFIG_FILE ]] || seed_config
   local id="$1" action="$2" output
   output=$(resolve "$id")
-  [[ -n $output ]] || die "unknown monitor: $id (not an output or alias in $CONFIG_FILE)"
+  [[ -n $output ]] || die "unknown monitor: $id (not an output, alias, or number in $CONFIG_FILE)"
 
   local lv
   lv=$(live)
@@ -398,7 +410,7 @@ cmd_move() { # <id> <XxY|left-of|right-of|above|below> [ref-id]
   local id="$1" what="$2" ref="${3:-}" lv output pos
   lv=$(prepare)
   output=$(resolve "$id")
-  [[ -n $output ]] || die "unknown monitor: $id (not an output or alias in $CONFIG_FILE)"
+  [[ -n $output ]] || die "unknown monitor: $id (not an output, alias, or number in $CONFIG_FILE)"
 
   if [[ $what =~ ^-?[0-9]+x-?[0-9]+$ ]]; then
     pos="$what"
@@ -406,7 +418,7 @@ cmd_move() { # <id> <XxY|left-of|right-of|above|below> [ref-id]
     [[ -n $ref ]] || die "move $what needs a reference monitor: move $id $what <id2>"
     local refout boxes mine theirs
     refout=$(resolve "$ref")
-    [[ -n $refout ]] || die "unknown monitor: $ref (not an output or alias in $CONFIG_FILE)"
+    [[ -n $refout ]] || die "unknown monitor: $ref (not an output, alias, or number in $CONFIG_FILE)"
     [[ $refout != "$output" ]] || die "cannot move $output relative to itself"
     boxes=$(layout_boxes "$(cat "$CONFIG_FILE")" "$lv")
     mine=$(jq -c --arg o "$output" '[.[] | select(.output == $o)][0] // empty' <<<"$boxes")
@@ -443,9 +455,9 @@ cmd_swap() { # <a> <b>
   local lv oa ob backup newcfg
   lv=$(prepare)
   oa=$(resolve "$1")
-  [[ -n $oa ]] || die "unknown monitor: $1 (not an output or alias in $CONFIG_FILE)"
+  [[ -n $oa ]] || die "unknown monitor: $1 (not an output, alias, or number in $CONFIG_FILE)"
   ob=$(resolve "$2")
-  [[ -n $ob ]] || die "unknown monitor: $2 (not an output or alias in $CONFIG_FILE)"
+  [[ -n $ob ]] || die "unknown monitor: $2 (not an output, alias, or number in $CONFIG_FILE)"
   [[ $oa != "$ob" ]] || die "cannot swap $oa with itself"
 
   backup=$(cat "$CONFIG_FILE")
@@ -492,7 +504,8 @@ cmd_plan() { # [--json]
 }
 
 usage() {
-  sed -n '13,30p' "$0" | sed 's/^# \{0,1\}//'
+  # Single-source: print the header comment's Usage block, robust to edits.
+  sed -n '/^# Usage:/,/^#   SUPER\+SHIFT\+CTRL/p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
 

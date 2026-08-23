@@ -108,6 +108,21 @@ Panel {
     return 0
   }
 
+  // monitor-switcher fork: rows sorted by the backend's config-order number
+  // (pack order, left-to-right) so the list reads like the physical layout
+  // and matches `monitor-switcher toggle N`. Falls back to compositor order
+  // until meta arrives.
+  function sortedDisplays() {
+    var meta = root.switcherMeta || {}
+    var arr = root.displays.slice()
+    arr.sort(function(a, b) {
+      var na = (meta[a.name] && meta[a.name].num) || 999
+      var nb = (meta[b.name] && meta[b.name].num) || 999
+      return na - nb
+    })
+    return arr
+  }
+
   function moveCursor(delta) {
     var sections = visibleSections
     if (!sections || sections.length === 0) return
@@ -160,8 +175,10 @@ Panel {
       setScale(scaleValues[selectedIndex])
       return
     }
+    // monitor-switcher fork: index the same pack-order-sorted rows the
+    // Repeater renders, so keyboard activation hits the row under the cursor.
     if (focusSection === "monitors" && selectedIndex >= 0 && selectedIndex < displays.length) {
-      var d = displays[selectedIndex]
+      var d = sortedDisplays()[selectedIndex]
       if (d) toggleDisplay(d.name, d.enabled)
     }
     // brightness: no separate action; the slider value is the action.
@@ -911,7 +928,7 @@ Panel {
             }
 
             Repeater {
-              model: root.displays
+              model: root.sortedDisplays() // monitor-switcher fork: pack-order rows
 
               MonitorRow {
                 required property var modelData
@@ -929,14 +946,30 @@ Panel {
             foreground: root.bar.foreground
           }
 
-          Text {
+          Column {
             width: parent.width
-            text: "↑↓ navigate · ←→ adjust · ⏎ toggle display · esc close" // monitor-switcher fork
-            color: Qt.darker(root.bar.foreground, 1.4)
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
+            spacing: Style.space(2)
+
+            Text {
+              width: parent.width
+              text: "↑↓ navigate · ←→ adjust · ⏎ toggle display · esc close"
+              color: Qt.darker(root.bar.foreground, 1.4)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+            }
+
+            Text {
+              width: parent.width
+              visible: root.displays.length > 1
+              text: "keybind to adopt: SUPER+SHIFT+CTRL+1…" + root.displays.length + " → toggle display N"
+              color: Qt.darker(root.bar.foreground, 1.4)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+            }
           }
 
           Item {
@@ -1016,7 +1049,10 @@ Panel {
 
       Text {
         id: rowLabel
-        text: ((monitorRow.meta && monitorRow.meta.alias) || monitorRow.display.name)
+        // monitor-switcher fork: number rows by config order so the row
+        // matches `monitor-switcher toggle N` / keybinds 1..N.
+        text: (monitorRow.meta && monitorRow.meta.num ? String(monitorRow.meta.num) + " · " : "")
+              + ((monitorRow.meta && monitorRow.meta.alias) || monitorRow.display.name)
               + (monitorRow.display.focused ? " · focused" : "")
         color: root.bar.foreground
         font.family: root.bar.fontFamily

@@ -38,10 +38,15 @@ grep -n "monitor-switcher fork" Panel.qml
    Switcher"`.
 4. **Panel title** — hero reads "Monitor Switcher" instead of "Display", so
    screenshots in issue reports are attributable to the right project.
-5. **Named rows** — a second `Process` polls `bin/monitor-switcher state
-   --json` into a `switcherMeta` map (fired from `refresh()`); DISPLAYS rows
-   render the alias and a `WxH @scalex` caption instead of the bare output
-   name. Display-only; all state logic still runs on `root.displays`.
+5. **Named, numbered rows** — a second `Process` polls
+   `bin/monitor-switcher state --json` into a `switcherMeta` map (fired from
+   `refresh()`); DISPLAYS rows render the config-order number, the alias,
+   and a `WxH @scalex` caption instead of the bare output name. The number
+   matches the backend's numeric ids (`monitor-switcher toggle N`), and rows
+   are **sorted by that number** (`sortedDisplays()`; the Repeater model and
+   `activateCursor` index the same array, so keyboard activation tracks) —
+   the list reads left-to-right like the physical layout. Ordering aside, all
+   state logic still runs on `root.displays`.
 6. **Brightness target label** — the BRIGHTNESS section header names the
    focused display it controls (`BRIGHTNESS · ACER`), mirroring upstream's
    SCALE header pattern. Upstream's slider only ever targets the focused
@@ -62,9 +67,11 @@ grep -n "monitor-switcher fork" Panel.qml
    successful toggle. Failed toggles (last-display guard) don't reopen. If
    the disabled monitor owned this bar, nothing reopens — correct,
    since that surface is gone.
-9. **Keyboard hints footer** — a `PanelSeparator` + centered caption under
-   the DISPLAYS section (`↑↓ navigate · ←→ adjust · ⏎ toggle display · esc
-   close`). Pure discoverability for the keyboard-first toggle flow; no
+9. **Keyboard hints footer** — a `PanelSeparator` + two centered captions
+   under the DISPLAYS section: the panel's own keys (`↑↓ navigate · ←→
+   adjust · ⏎ toggle display · esc close`) and, when more than one display
+   is managed, an adoptable-keybind tip (`SUPER+SHIFT+CTRL+1…N → toggle
+   display N`, N tracks `root.displays.length`). Pure discoverability; no
    logic.
 
 ## Re-sync procedure (after each Omarchy update)

@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.5.0 — 2026-08-23
+
+- **Numbered displays.** Every managed monitor now has a stable number — its
+  place in the config/pack order (left-to-right). The CLI accepts it
+  everywhere an output or alias works (`monitor-switcher toggle 2`), `state`
+  prints it, and panel rows are prefixed with it (`2 · LG · focused`), so
+  the keybind target is visible in-product. Numbers need no aliases and
+  survive output renumbering, which makes generic keybinds possible:
+  `SUPER+SHIFT+CTRL+1…N → monitor-switcher toggle 1…N` works on any
+  multi-monitor setup with zero configuration.
+- **Keybind discoverability**: the popup footer gains a second hint line
+  suggesting exactly that convention ("keybind to adopt:
+  SUPER+SHIFT+CTRL+1…N → toggle display N", shown when 2+ displays are
+  managed), and the README now documents that described `o.bind` entries
+  appear in Omarchy's `SUPER+K` keybindings sheet like first-party
+  shortcuts.
+- New preview.png: numbered rows, both footer hints, and a toggled-off
+  monitor row (slashed glyph, no check).
+
 ## 2.4.0 — 2026-08-23
 
 - **Keyboard hints footer in the popup** — a caption line under DISPLAYS
