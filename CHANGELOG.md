@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.5.3 — 2026-08-24
+
+- **Marketplace review round 2** (#1918): `safe_read()` no longer
+  checks-then-opens. It opens the file first, then verifies type *and* true
+  byte size through the open descriptor (`/proc/self/fd`), under a timeout
+  so a swapped-in fifo fails closed instead of blocking. Oversized files
+  are rejected by exact size — a capped prefix that happens to be valid
+  JSON no longer passes.
+- **Scale pills actually change scale now.** They previously routed to
+  `omarchy-hyprland-monitor-scaling`, which applies a runtime-only rule
+  with `position = "auto"` and a mode string built from the live refresh
+  rate (e.g. `3840x1600@74.977`) that some panels reject outright — and
+  anything that did apply was reverted by the generated layout on the next
+  reload. New backend verb `monitor-switcher scale <id> <factor>` rounds to
+  a Hyprland-clean scale against the configured mode, persists it to
+  config.json, and re-applies through the overlap validator (packing
+  reflows; pinned positions are still validated, with rollback on refusal).
+  The panel's scale pills route through it. Fork patch list grows to
+  eleven (UPSTREAM.md).
+
 ## 2.5.2 — 2026-08-24
 
 - **Security hardening** (marketplace review on submission #1918): all

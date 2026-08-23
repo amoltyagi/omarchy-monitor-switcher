@@ -364,8 +364,13 @@ Panel {
   // === end monitor-switcher fork ===========================================
 
   function setScale(scale) {
-    // monitor-switcher fork: bound collector input (StdioCollector has no limit)
-    actionProc.command = ["bash", "-c", "omarchy-hyprland-monitor-scaling " + scale + " | head -c 65536"]
+    // monitor-switcher fork: route scale through the backend — persisted in
+    // config.json and re-applied through the overlap validator, instead of
+    // the upstream tool's runtime-only position="auto" poke that our
+    // generated layout reverts on the next reload (and whose mode string,
+    // built from the live refresh rate, some panels reject outright).
+    // Still bounded: StdioCollector has no limit.
+    actionProc.command = ["bash", "-c", "\"$1\" scale \"$2\" \"$3\" | head -c 65536", "monitor-switcher", root.scriptPath, root.focusedMonitor, scale]
     if (!actionProc.running) actionProc.running = true
   }
 

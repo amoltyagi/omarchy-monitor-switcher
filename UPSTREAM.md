@@ -78,6 +78,14 @@ grep -n "monitor-switcher fork" Panel.qml
     lives in the spawned command). Covers `stateProc`, `switcherProc`,
     `setBrightnessProc`, `actionProc` (toggle + scale assignments), and
     `textScaleProc`. Marketplace review finding on #1918.
+11. **Scale via backend** — `setScale()` calls
+    `bin/monitor-switcher scale <focused> <factor>` instead of
+    `omarchy-hyprland-monitor-scaling` (whose runtime-only
+    `position="auto"` poke the generated layout reverts on the next reload,
+    and whose live-refreshRate mode string some panels reject outright).
+    The backend rounds to a Hyprland-clean scale, persists it in
+    `config.json`, and re-applies through the overlap validator; packing
+    reflows automatically.
 
 ## Re-sync procedure (after each Omarchy update)
 
@@ -86,7 +94,7 @@ grep -n "monitor-switcher fork" Panel.qml
    `diff /usr/share/omarchy/shell/plugins/panels/monitor/Panel.qml Panel.qml`
    ignoring the fenced blocks.
 2. If upstream changed: copy the fresh `Panel.qml` / `Model.js` over ours,
-   re-apply the ten patches above (all within `monitor-switcher fork`
+   re-apply the eleven patches above (all within `monitor-switcher fork`
    fences), and update the version in the table.
 3. Run the smoke matrix:
    - panel opens; brightness slider + scroll-wheel brightness + OSD work

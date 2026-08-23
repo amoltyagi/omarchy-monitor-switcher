@@ -22,6 +22,7 @@
 #   monitor-switcher move <id> <left-of|right-of|above|below> <id2>
 #   monitor-switcher swap <a> <b>     Exchange two monitors' places in the pack order
 #   monitor-switcher pack             Clear all pinned positions; re-pack left-to-right
+#   monitor-switcher scale <id> <factor>  Set scale (rounded to a Hyprland-clean value)
 #   monitor-switcher apply            Regenerate layout from config + reload
 #
 #   <id> = output name (DP-3), alias (MSI), or number — the monitor's place
@@ -47,18 +48,36 @@ die() { echo "monitor-switcher: $*" >&2; exit 1; }
 
 # --- Guarded file I/O -------------------------------------------------------
 # Every read/write of the fixed config/state/generated paths funnels through
-# these helpers. Reads refuse symlinks and non-regular files (a planted fifo
-# would block forever; a planted symlink would feed an unrelated file into
-# our parsing), cap bytes, and require valid JSON. Writes refuse symlinked
-# parents/targets and go through a mktemp file in the same directory plus an
-# atomic rename — a link planted at the target is *replaced*, never followed,
-# and a crash mid-write never leaves a truncated file behind.
+# these helpers.
+#
+# Reads (safe_read): a cheap path pre-filter, then a subshell that OPENS the
+# file and verifies type + size through the open descriptor
+# (/proc/self/fd) — no check-then-open race: whatever inode we opened is
+# what we inspect, a swap-in of the pathname after open() is irrelevant, and
+# a fifo swapped in BEFORE open() blocks the open and is killed by the
+# timeout (fails closed). Size is enforced by the true byte count via the
+# descriptor, not by truncation — an oversized file whose capped prefix is
+# valid JSON is rejected. Callers (read_json) additionally require valid
+# JSON.
+#
+# Writes (write_file): refuse symlinked parents/targets and go through a
+# mktemp file in the same directory plus an atomic rename — a link planted
+# at the target is *replaced*, never followed, and a crash mid-write never
+# leaves a truncated file behind.
 MAX_FILE_BYTES=1048576
 
-safe_read() { # <file> — stdout: content; fails for symlink/non-regular paths
+safe_read() { # <file> — stdout: content iff a real, regular, <=cap file
   local f=$1
-  [[ -f $f && ! -L $f ]] || return 1
-  head -c "$MAX_FILE_BYTES" -- "$f"
+  [[ -f $f && ! -L $f ]] || return 1 # fast path for the common missing file
+  timeout 3 bash -c '
+    f=$1; max=$2
+    exec {fd}<"$f" 2> /dev/null || exit 1
+    # Inspect the OPENED file, not the pathname: immune to post-open swaps.
+    [[ $(stat -Lc %F "/proc/self/fd/$fd" 2> /dev/null) == "regular file" ]] || exit 1
+    size=$(stat -Lc %s "/proc/self/fd/$fd" 2> /dev/null) || exit 1
+    (( size >= 0 && size <= max )) || exit 1
+    cat <&"$fd"
+  ' _ "$f" "$MAX_FILE_BYTES"
 }
 
 read_json() { # <file> — stdout: content iff readable AND valid JSON
@@ -541,6 +560,55 @@ cmd_pack() {
   echo "positions cleared; monitors pack left-to-right in config order"
 }
 
+# Hyprland only accepts scales that divide the mode into whole logical
+# pixels (1/120 steps): clean scales are divisors of gcd(w*120, h*120).
+# Round the request UP to the nearest clean value (mirrors
+# omarchy-hyprland-monitor-scaling, so panel pills and CLI agree).
+clean_scale() { # <scale> <mode-w> <mode-h>
+  awk -v scale="$1" -v width="$2" -v height="$3" '
+    function gcd(a, b, t) { while (b) { t = a % b; a = b; b = t } return a }
+    BEGIN {
+      g = gcd(width * 120, height * 120)
+      k = int(scale * 120 + 0.5)
+      if (k > g) k = g
+      while (g % k != 0) k++
+      printf "%g\n", k / 120
+    }'
+}
+
+cmd_scale() { # <id> <factor>
+  local id="$1" factor="$2" lv output mw mh clean backup newcfg alias
+  [[ $factor =~ ^[0-9]+([.][0-9]+)?$ ]] \
+    && awk -v s="$factor" 'BEGIN { exit !(s >= 0.25 && s <= 5) }' \
+    || die "scale must be a number between 0.25 and 5 (got: $factor)"
+  lv=$(prepare)
+  output=$(resolve "$id")
+  [[ -n $output ]] || die "unknown monitor: $id (not an output, alias, or number in $CONFIG_FILE)"
+
+  # Round against the CONFIGURED mode's geometry, not the live one.
+  read -r mw mh <<<"$(read_config | jq -r --arg o "$output" '
+    .[] | select(.output == $o)
+    | if ((.mode // "preferred") | test("^[0-9]+x[0-9]+")) then
+        (.mode | capture("^(?<w>[0-9]+)x(?<h>[0-9]+)") | "\(.w) \(.h)")
+      else "\(.mode_w // 0) \(.mode_h // 0)" end')"
+  [[ $mw != 0 && $mh != 0 ]] || die "no mode geometry for $output — pin an explicit mode first"
+  clean=$(clean_scale "$factor" "$mw" "$mh")
+
+  backup=$(read_config)
+  newcfg=$(jq --arg o "$output" --argjson s "$clean" \
+    'map(if .output == $o then . + {scale: $s} else . end)' <<<"$backup")
+  printf '%s\n' "$newcfg" | write_file "$CONFIG_FILE"
+  # Subshell: die inside apply exits the subshell, not us — rollback runs.
+  # A scale change reflows packing and can collide with pinned positions;
+  # the overlap validator decides, and a refusal leaves everything as it was.
+  if ! (apply); then
+    printf '%s\n' "$backup" | write_file "$CONFIG_FILE"
+    die "scale reverted; config and layout unchanged"
+  fi
+  alias=$(read_config | jq -r --arg o "$output" '.[] | select(.output == $o) | (.alias // .output)')
+  echo "$alias ($output) scale $clean"
+}
+
 cmd_plan() { # [--json]
   local lv boxes collision
   lv=$(prepare)
@@ -572,6 +640,7 @@ case "${1:-}" in
   move)    [[ $# -ge 3 && $# -le 4 ]] || usage; cmd_move "$2" "$3" "${4:-}" ;;
   swap)    [[ $# -eq 3 ]] || usage; cmd_swap "$2" "$3" ;;
   pack)    cmd_pack ;;
+  scale)   [[ $# -eq 3 ]] || usage; cmd_scale "$2" "$3" ;;
   apply)   apply ;;
   *)       usage ;;
 esac

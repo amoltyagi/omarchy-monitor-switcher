@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "case.monitor-switcher",
   "name": "Monitor Switcher",
-  "version": "2.5.2",
+  "version": "2.5.3",
   "author": "amoltyagi",
   "license": "MIT",
   "description": "Drop-in replacement for Omarchy's Display widget: monitor toggles that persist across reloads and reboots, overlap-validated layouts, aliases and a CLI for keybinds",
