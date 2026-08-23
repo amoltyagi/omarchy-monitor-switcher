@@ -89,9 +89,9 @@ Everything the built-in Display widget already does, unchanged:
   last-display lock, laptop internal/mirror handling
 - instant reaction to **monitor hotplug** and external keybind toggles
 - **keyboard control, mouse optional**: `↑`/`↓` to a display row,
-  `⏎`/`space` switches that monitor on or off — the popup footer shows the
-  hints, so they're discoverable in-product; `←`/`→` adjust sliders and
-  walk the scale presets, `esc` close, `tab` hop to the next panel
+  `⏎`/`space` switches that monitor on or off; `←`/`→` adjust sliders and
+  walk the scale presets, `esc` close, `tab` hop to the next panel — and
+  the popup footer shows the adoptable `SUPER+SHIFT+CTRL+1…N` shortcut
 
 Plus what the built-in widget can't do:
 

@@ -941,35 +941,21 @@ Panel {
             }
           }
 
-          // ---------- monitor-switcher fork: keyboard hints footer ----------
+          // ---------- monitor-switcher fork: keyboard hint footer ----------
           PanelSeparator {
+            visible: root.displays.length > 1
             foreground: root.bar.foreground
           }
 
-          Column {
+          Text {
             width: parent.width
-            spacing: Style.space(2)
-
-            Text {
-              width: parent.width
-              text: "↑↓ navigate · ←→ adjust · ⏎ toggle display · esc close"
-              color: Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              horizontalAlignment: Text.AlignHCenter
-              wrapMode: Text.WordWrap
-            }
-
-            Text {
-              width: parent.width
-              visible: root.displays.length > 1
-              text: "keybind to adopt: SUPER+SHIFT+CTRL+1…" + root.displays.length + " → toggle display N"
-              color: Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              horizontalAlignment: Text.AlignHCenter
-              wrapMode: Text.WordWrap
-            }
+            visible: root.displays.length > 1
+            text: "Keyboard shortcut: SUPER+SHIFT+CTRL+1…" + root.displays.length
+            color: Qt.darker(root.bar.foreground, 1.4)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
           }
 
           Item {

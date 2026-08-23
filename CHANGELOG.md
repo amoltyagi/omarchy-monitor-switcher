@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.1 — 2026-08-23
+
+- Popup footer simplified to a single line — "Keyboard shortcut:
+  SUPER+SHIFT+CTRL+1…N" (shown with 2+ displays). The navigation-key
+  rundown was crowded; the README already covers the keys.
+
 ## 2.5.0 — 2026-08-23
 
 - **Numbered displays.** Every managed monitor now has a stable number — its

@@ -67,12 +67,11 @@ grep -n "monitor-switcher fork" Panel.qml
    successful toggle. Failed toggles (last-display guard) don't reopen. If
    the disabled monitor owned this bar, nothing reopens — correct,
    since that surface is gone.
-9. **Keyboard hints footer** — a `PanelSeparator` + two centered captions
-   under the DISPLAYS section: the panel's own keys (`↑↓ navigate · ←→
-   adjust · ⏎ toggle display · esc close`) and, when more than one display
-   is managed, an adoptable-keybind tip (`SUPER+SHIFT+CTRL+1…N → toggle
-   display N`, N tracks `root.displays.length`). Pure discoverability; no
-   logic.
+9. **Keyboard hint footer** — a `PanelSeparator` + one centered caption
+   under the DISPLAYS section suggesting the adoptable keybind convention
+   (`Keyboard shortcut: SUPER+SHIFT+CTRL+1…N`, N tracks
+   `root.displays.length`; only shown with 2+ displays). Pure
+   discoverability; no logic.
 
 ## Re-sync procedure (after each Omarchy update)
 
