@@ -271,7 +271,8 @@ Panel {
     }
 
     root.brightnessSetQueued = false
-    setBrightnessProc.command = ["omarchy-brightness-display", "--no-osd", "--monitor", root.focusedMonitor, percent + "%"]
+    // monitor-switcher fork: bound collector input (StdioCollector has no limit)
+    setBrightnessProc.command = ["bash", "-c", "omarchy-brightness-display --no-osd --monitor \"$1\" \"$2\" | head -c 65536", "monitor-switcher", root.focusedMonitor, percent + "%"]
     setBrightnessProc.running = true
   }
 
@@ -355,13 +356,16 @@ Panel {
     if (enabled && root.enabledDisplayCount <= 1) return
 
     root.reopenAfterAction = root.opened
-    actionProc.command = [root.scriptPath, "toggle", name]
+    // Bound the collector input at the source: the installed StdioCollector
+    // has no size limit, so cap bytes here (SIGPIPE contains a flood).
+    actionProc.command = ["bash", "-c", "\"$1\" toggle \"$2\" | head -c 65536", "monitor-switcher", root.scriptPath, name]
     if (!actionProc.running) actionProc.running = true
   }
   // === end monitor-switcher fork ===========================================
 
   function setScale(scale) {
-    actionProc.command = ["bash", "-c", "omarchy-hyprland-monitor-scaling " + scale]
+    // monitor-switcher fork: bound collector input (StdioCollector has no limit)
+    actionProc.command = ["bash", "-c", "omarchy-hyprland-monitor-scaling " + scale + " | head -c 65536"]
     if (!actionProc.running) actionProc.running = true
   }
 
@@ -389,7 +393,8 @@ Panel {
   }
 
   function setTextSize(px) {
-    textScaleProc.command = ["omarchy-display-text-size", String(px)]
+    // monitor-switcher fork: bound collector input (StdioCollector has no limit)
+    textScaleProc.command = ["bash", "-c", "omarchy-display-text-size \"$1\" | head -c 65536", "monitor-switcher", String(px)]
     if (!textScaleProc.running) textScaleProc.running = true
   }
 
@@ -447,7 +452,8 @@ Panel {
 
   Process {
     id: stateProc
-    command: ["omarchy-monitor-state"]
+    // monitor-switcher fork: bound collector input (StdioCollector has no limit)
+    command: ["bash", "-c", "omarchy-monitor-state | head -c 65536"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -476,7 +482,8 @@ Panel {
 
   Process {
     id: switcherProc
-    command: [root.scriptPath, "state", "--json"]
+    // monitor-switcher fork: bound collector input (StdioCollector has no limit)
+    command: ["bash", "-c", "\"$1\" state --json | head -c 262144", "monitor-switcher", root.scriptPath]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {

@@ -72,6 +72,12 @@ grep -n "monitor-switcher fork" Panel.qml
    (`Keyboard shortcut: SUPER+SHIFT+CTRL+1…N`, N tracks
    `root.displays.length`; only shown with 2+ displays). Pure
    discoverability; no logic.
+10. **Bounded process output** — every `Process` command that feeds a
+    `StdioCollector` is wrapped with `| head -c N` (argv-safe `bash -c`
+    form; the installed `StdioCollector` exposes no size limit, so the cap
+    lives in the spawned command). Covers `stateProc`, `switcherProc`,
+    `setBrightnessProc`, `actionProc` (toggle + scale assignments), and
+    `textScaleProc`. Marketplace review finding on #1918.
 
 ## Re-sync procedure (after each Omarchy update)
 
@@ -80,7 +86,7 @@ grep -n "monitor-switcher fork" Panel.qml
    `diff /usr/share/omarchy/shell/plugins/panels/monitor/Panel.qml Panel.qml`
    ignoring the fenced blocks.
 2. If upstream changed: copy the fresh `Panel.qml` / `Model.js` over ours,
-   re-apply the nine patches above (all within `monitor-switcher fork`
+   re-apply the ten patches above (all within `monitor-switcher fork`
    fences), and update the version in the table.
 3. Run the smoke matrix:
    - panel opens; brightness slider + scroll-wheel brightness + OSD work

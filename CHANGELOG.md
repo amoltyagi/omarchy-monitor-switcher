@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.5.2 — 2026-08-24
+
+- **Security hardening** (marketplace review on submission #1918): all
+  backend file I/O now funnels through two guarded helpers. Reads refuse
+  symlinks and non-regular files (a planted fifo would otherwise block a
+  read forever), cap at 1 MB, and require valid JSON; writes refuse
+  symlinked parents/targets and go through mktemp + atomic rename, so a
+  link planted at a target path is *replaced*, never followed — and a crash
+  mid-write never leaves a truncated file. Unreadable state degrades to the
+  safe default with a warning; an unreadable config fails loudly with
+  recovery guidance.
+- Panel: every `Process` feeding a `StdioCollector` is output-capped at the
+  command level (`| head -c N`, argv-safe) — the installed StdioCollector
+  has no size limit, so the bound lives in the spawned command. Fork patch
+  list grows to ten (UPSTREAM.md).
+
 ## 2.5.1 — 2026-08-23
 
 - Popup footer simplified to a single line — "Keyboard shortcut:

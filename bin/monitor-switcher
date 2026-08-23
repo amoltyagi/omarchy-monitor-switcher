@@ -45,6 +45,50 @@ GENERATED_FILE="$TOGGLES_DIR/monitor-switcher.lua"
 
 die() { echo "monitor-switcher: $*" >&2; exit 1; }
 
+# --- Guarded file I/O -------------------------------------------------------
+# Every read/write of the fixed config/state/generated paths funnels through
+# these helpers. Reads refuse symlinks and non-regular files (a planted fifo
+# would block forever; a planted symlink would feed an unrelated file into
+# our parsing), cap bytes, and require valid JSON. Writes refuse symlinked
+# parents/targets and go through a mktemp file in the same directory plus an
+# atomic rename — a link planted at the target is *replaced*, never followed,
+# and a crash mid-write never leaves a truncated file behind.
+MAX_FILE_BYTES=1048576
+
+safe_read() { # <file> — stdout: content; fails for symlink/non-regular paths
+  local f=$1
+  [[ -f $f && ! -L $f ]] || return 1
+  head -c "$MAX_FILE_BYTES" -- "$f"
+}
+
+read_json() { # <file> — stdout: content iff readable AND valid JSON
+  local content
+  content=$(safe_read "$1") || return 1
+  jq -e . > /dev/null 2>&1 <<<"$content" || return 1
+  printf '%s\n' "$content"
+}
+
+read_config() { # stdout: validated config; an unreadable config is fatal
+  local content
+  content=$(read_json "$CONFIG_FILE") \
+    || die "cannot read $CONFIG_FILE (missing, not a regular file, symlink, or invalid JSON) — delete it to re-seed"
+  printf '%s\n' "$content"
+}
+
+write_file() { # <file> — stdin: content. Atomic, symlink-refusing write.
+  local f=$1 dir tmp
+  dir=$(dirname -- "$f")
+  mkdir -p -- "$dir"
+  [[ -d $dir && ! -L $dir ]] || die "refusing to write into $dir: not a real directory (planted link?)"
+  [[ ! -L $f ]] || die "refusing to write $f: path is a symlink (planted?)"
+  tmp=$(mktemp "$dir/.$(basename -- "$f").XXXXXX")
+  if ! cat > "$tmp"; then
+    rm -f -- "$tmp"
+    die "could not stage write to $f"
+  fi
+  mv -f -- "$tmp" "$f"
+}
+
 # hyprctl can answer empty, partial, or mid-transition while the compositor
 # is busy re-enumerating outputs (reloads, physical hotplug, the watcher's
 # modeless-recovery loop). Callers write files derived from this data, so a
@@ -54,7 +98,7 @@ die() { echo "monitor-switcher: $*" >&2; exit 1; }
 live() {
   local out ok geom prev_geom="" i
   for i in $(seq 1 10); do
-    if out=$(hyprctl monitors all -j 2> /dev/null) && [[ -n $out ]]; then
+    if out=$(hyprctl monitors all -j 2> /dev/null | head -c "$MAX_FILE_BYTES") && [[ -n $out ]]; then
       ok=$(jq -r '
         if (type == "array" and length > 0
             and all(.[]; .disabled == true or ((.width // 0) > 0 and (.height // 0) > 0)))
@@ -75,7 +119,17 @@ live() {
 }
 
 read_state() {
-  if [[ -f $STATE_FILE ]]; then cat "$STATE_FILE"; else printf '{"disabled":[]}\n'; fi
+  local content
+  if content=$(read_json "$STATE_FILE"); then
+    printf '%s\n' "$content"
+  else
+    # Missing is normal (first run); present-but-unreadable (planted link,
+    # fifo, garbage) gets a warning — and the safe default.
+    if [[ -e $STATE_FILE || -L $STATE_FILE ]]; then
+      echo "monitor-switcher: ignoring suspect $STATE_FILE; using default state" >&2
+    fi
+    printf '{"disabled":[]}\n'
+  fi
 }
 
 is_disabled() { # <output>
@@ -84,19 +138,16 @@ is_disabled() { # <output>
 
 set_disabled() { # <output> <true|false>
   local op
-  mkdir -p "$STATE_DIR"
   if [[ $2 == true ]]; then
     op='.disabled = (.disabled + [$o] | unique)'
   else
     op='.disabled -= [$o]'
   fi
-  read_state | jq --arg o "$1" "$op" > "$STATE_FILE.tmp"
-  mv "$STATE_FILE.tmp" "$STATE_FILE"
+  read_state | jq --arg o "$1" "$op" | write_file "$STATE_FILE"
 }
 
 # Create a config from the current live setup, ordered left-to-right.
 seed_config() {
-  mkdir -p "$CONFIG_DIR"
   local seeded
   seeded=$(live | jq '
     sort_by(.x)
@@ -110,10 +161,9 @@ seed_config() {
         mode_h: .height
       })
   ') || die "could not seed config from live state"
-  # Build-then-write: a redirect inside the pipeline would truncate
-  # $CONFIG_FILE even when the producer fails.
+  # Build-then-write: the layout is fully derived before write_file stages it.
   [[ -n $seeded ]] || die "could not seed config from live state"
-  printf '%s\n' "$seeded" > "$CONFIG_FILE"
+  printf '%s\n' "$seeded" | write_file "$CONFIG_FILE"
   echo "monitor-switcher: created $CONFIG_FILE from current setup" >&2
 }
 
@@ -121,18 +171,20 @@ seed_config() {
 # alias, or a bare number — the 1-based place in config order (left-to-right
 # pack order), so `toggle 2` needs no alias and survives output renumbering.
 resolve() { # <id>
+  local cfg
+  cfg=$(read_config)
   if [[ $1 =~ ^[0-9]+$ ]]; then
-    jq -r --argjson n "$1" '.[$n - 1].output // empty' "$CONFIG_FILE"
+    jq -r --argjson n "$1" '.[$n - 1].output // empty' <<<"$cfg"
     return
   fi
   jq -r --arg id "$1" '
     .[] | select(.output == $id or ((.alias // "") | ascii_downcase) == ($id | ascii_downcase))
     | .output
-  ' "$CONFIG_FILE" | head -1
+  ' <<<"$cfg" | head -1
 }
 
 # Config plus any connected-but-unlisted monitors appended (rightmost).
-adopt_new() { # <live-json>
+adopt_new() { # <live-json> — stdin: current config
   jq --argjson lv "$1" '
     . as $cfg
     | $cfg + [
@@ -143,7 +195,7 @@ adopt_new() { # <live-json>
             mode: "preferred", transform: (.transform // 0),
             mode_w: .width, mode_h: .height }
       ]
-  ' "$CONFIG_FILE"
+  '
 }
 
 # Backfill mode_w/mode_h for legacy entries: "preferred"-mode monitors added
@@ -224,11 +276,11 @@ apply() {
   [[ -s $CONFIG_FILE ]] || seed_config
   local lv cfg boxes collision
   lv=$(live)
-  cfg=$(adopt_new "$lv")
+  cfg=$(read_config | adopt_new "$lv")
   cfg=$(backfill_geometry "$cfg" "$lv")
   # Never overwrite the user's config with an empty derivation.
   [[ -n $cfg ]] || die "config derivation came back empty; $CONFIG_FILE left untouched"
-  printf '%s\n' "$cfg" > "$CONFIG_FILE"
+  printf '%s\n' "$cfg" | write_file "$CONFIG_FILE"
 
   boxes=$(layout_boxes "$cfg" "$lv")
   # Overlap pre-flight: Hyprland answers an overlapping layout with
@@ -238,9 +290,9 @@ apply() {
   [[ -z $collision ]] || die "refusing to apply overlapping layout: $collision (fix with 'monitor-switcher move' or 'pack'; current layout unchanged)"
 
   mkdir -p "$TOGGLES_DIR"
-  # Build the whole file before writing it: a redirect around the loop would
-  # leave a truncated layout behind if any jq call failed midway, and the
-  # reload below would then source it.
+  [[ ! -L $TOGGLES_DIR ]] || die "refusing to write into $TOGGLES_DIR: symlink (planted?)"
+  # Build the whole file before writing it: write_file stages via mktemp, so
+  # the reload below never sources a truncated layout.
   local entry output live_entry mode scale transform box px py
   local generated="-- GENERATED by monitor-switcher — do not edit.
 -- Edit $CONFIG_FILE instead, then run: monitor-switcher apply"
@@ -262,7 +314,7 @@ apply() {
     generated+=$(printf '\nhl.monitor({ output = "%s", mode = "%s", position = "%sx%s", scale = %s, transform = %s })' \
       "$output" "$mode" "$px" "$py" "$scale" "$transform")
   done < <(jq -c '.[]' <<<"$cfg")
-  printf '%s\n' "$generated" > "$GENERATED_FILE"
+  printf '%s\n' "$generated" | write_file "$GENERATED_FILE"
 
   hyprctl reload > /dev/null
 }
@@ -271,10 +323,10 @@ state_json() {
   [[ -s $CONFIG_FILE ]] || seed_config
   local lv cfg
   lv=$(live)
-  cfg=$(adopt_new "$lv")
+  cfg=$(read_config | adopt_new "$lv")
   cfg=$(backfill_geometry "$cfg" "$lv")
   [[ -n $cfg ]] || die "config derivation came back empty; $CONFIG_FILE left untouched"
-  printf '%s\n' "$cfg" > "$CONFIG_FILE"
+  printf '%s\n' "$cfg" | write_file "$CONFIG_FILE"
   jq -n --argjson cfg "$cfg" --argjson lv "$lv" --argjson st "$(read_state)" '
     # Physical diagonal in inches from EDID-reported mm (0 = unknown).
     def inches_of($m):
@@ -370,7 +422,7 @@ cmd_toggle() { # <id> <on|off|toggle>
          && ! is_disabled "$name"; then
         enabled_others=$((enabled_others + 1))
       fi
-    done < <(jq -r '.[].output' "$CONFIG_FILE")
+    done < <(read_config | jq -r '.[].output')
     [[ $enabled_others -gt 0 ]] || die "refusing to disable the last active display"
   fi
 
@@ -384,7 +436,7 @@ cmd_toggle() { # <id> <on|off|toggle>
   fi
 
   local alias
-  alias=$(jq -r --arg o "$output" '.[] | select(.output == $o) | (.alias // .output)' "$CONFIG_FILE")
+  alias=$(read_config | jq -r --arg o "$output" '.[] | select(.output == $o) | (.alias // .output)')
   if [[ $next == off ]]; then
     echo "$alias ($output) off"
   else
@@ -399,10 +451,10 @@ prepare() {
   [[ -s $CONFIG_FILE ]] || seed_config
   local lv cfg
   lv=$(live)
-  cfg=$(adopt_new "$lv")
+  cfg=$(read_config | adopt_new "$lv")
   cfg=$(backfill_geometry "$cfg" "$lv")
   [[ -n $cfg ]] || die "config derivation came back empty; $CONFIG_FILE left untouched"
-  printf '%s\n' "$cfg" > "$CONFIG_FILE"
+  printf '%s\n' "$cfg" | write_file "$CONFIG_FILE"
   printf '%s\n' "$lv"
 }
 
@@ -420,7 +472,7 @@ cmd_move() { # <id> <XxY|left-of|right-of|above|below> [ref-id]
     refout=$(resolve "$ref")
     [[ -n $refout ]] || die "unknown monitor: $ref (not an output, alias, or number in $CONFIG_FILE)"
     [[ $refout != "$output" ]] || die "cannot move $output relative to itself"
-    boxes=$(layout_boxes "$(cat "$CONFIG_FILE")" "$lv")
+    boxes=$(layout_boxes "$(read_config)" "$lv")
     mine=$(jq -c --arg o "$output" '[.[] | select(.output == $o)][0] // empty' <<<"$boxes")
     theirs=$(jq -c --arg o "$refout" '[.[] | select(.output == $o)][0] // empty' <<<"$boxes")
     [[ -n $mine && -n $theirs ]] || die "both monitors must be connected and enabled for relative moves"
@@ -434,16 +486,16 @@ cmd_move() { # <id> <XxY|left-of|right-of|above|below> [ref-id]
   fi
 
   local backup newcfg alias
-  backup=$(cat "$CONFIG_FILE")
+  backup=$(read_config)
   newcfg=$(jq --arg o "$output" --arg p "$pos" \
     'map(if .output == $o then . + {position: $p} else . end)' <<<"$backup")
-  printf '%s\n' "$newcfg" > "$CONFIG_FILE"
+  printf '%s\n' "$newcfg" | write_file "$CONFIG_FILE"
   # Subshell: die inside apply exits the subshell, not us — rollback runs.
   if ! (apply); then
-    printf '%s\n' "$backup" > "$CONFIG_FILE"
+    printf '%s\n' "$backup" | write_file "$CONFIG_FILE"
     die "move reverted; config and layout unchanged"
   fi
-  alias=$(jq -r --arg o "$output" '.[] | select(.output == $o) | (.alias // .output)' "$CONFIG_FILE")
+  alias=$(read_config | jq -r --arg o "$output" '.[] | select(.output == $o) | (.alias // .output)')
   echo "$alias ($output) at $pos"
 }
 
@@ -460,16 +512,16 @@ cmd_swap() { # <a> <b>
   [[ -n $ob ]] || die "unknown monitor: $2 (not an output, alias, or number in $CONFIG_FILE)"
   [[ $oa != "$ob" ]] || die "cannot swap $oa with itself"
 
-  backup=$(cat "$CONFIG_FILE")
+  backup=$(read_config)
   newcfg=$(jq --arg oa "$oa" --arg ob "$ob" '
     (map(.output) | index($oa)) as $ia
     | (map(.output) | index($ob)) as $ib
     | .[$ia] as $a | .[$ib] as $b
     | .[$ia] = ($b | del(.position)) | .[$ib] = ($a | del(.position))' <<<"$backup")
-  printf '%s\n' "$newcfg" > "$CONFIG_FILE"
+  printf '%s\n' "$newcfg" | write_file "$CONFIG_FILE"
   # Subshell: die inside apply exits the subshell, not us — rollback runs.
   if ! (apply); then
-    printf '%s\n' "$backup" > "$CONFIG_FILE"
+    printf '%s\n' "$backup" | write_file "$CONFIG_FILE"
     die "swap reverted; config and layout unchanged"
   fi
   echo "swapped $oa and $ob in the packing order (pins cleared; 'move' to re-pin)"
@@ -478,12 +530,12 @@ cmd_swap() { # <a> <b>
 cmd_pack() {
   local backup cfg
   [[ -s $CONFIG_FILE ]] || seed_config
-  backup=$(cat "$CONFIG_FILE")
+  backup=$(read_config)
   cfg=$(jq 'map(del(.position))' <<<"$backup")
-  printf '%s\n' "$cfg" > "$CONFIG_FILE"
+  printf '%s\n' "$cfg" | write_file "$CONFIG_FILE"
   # Subshell: die inside apply exits the subshell, not us — rollback runs.
   if ! (apply); then
-    printf '%s\n' "$backup" > "$CONFIG_FILE"
+    printf '%s\n' "$backup" | write_file "$CONFIG_FILE"
     die "pack reverted; config and layout unchanged"
   fi
   echo "positions cleared; monitors pack left-to-right in config order"
@@ -492,7 +544,7 @@ cmd_pack() {
 cmd_plan() { # [--json]
   local lv boxes collision
   lv=$(prepare)
-  boxes=$(layout_boxes "$(cat "$CONFIG_FILE")" "$lv")
+  boxes=$(layout_boxes "$(read_config)" "$lv")
   if [[ ${1:-} == --json ]]; then
     jq '.' <<<"$boxes"
     return
