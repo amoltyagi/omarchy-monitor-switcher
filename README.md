@@ -5,6 +5,10 @@ Display widget** with an identical twin — brightness, text size, scale
 presets, display list — except its monitor on/off toggles are **persistent,
 layout-aware, and overlap-proof**.
 
+Built for **desktops with two or more external monitors**: switch panels
+off and on from the bar, the keyboard, or a keybind — and have it stay that
+way.
+
 ![preview](preview.png)
 
 This is an **unofficial fork** of Omarchy's `omarchy.monitor` widget
@@ -77,9 +81,10 @@ Everything the built-in Display widget already does, unchanged:
   (laptop / ultrawide / TV / monitor / slashed = off) read live from EDID —
   last-display lock, laptop internal/mirror handling
 - instant reaction to **monitor hotplug** and external keybind toggles
-- keyboard navigation: `↑`/`↓` move between sections and rows,
-  `←`/`→` adjust sliders and walk the scale presets, `⏎`/`space` apply,
-  `esc` close, `tab` hop to the next panel
+- **keyboard control, mouse optional**: `↑`/`↓` to a display row,
+  `⏎`/`space` switches that monitor on or off — the popup footer shows the
+  hints, so they're discoverable in-product; `←`/`→` adjust sliders and
+  walk the scale presets, `esc` close, `tab` hop to the next panel
 
 Plus what the built-in widget can't do:
 

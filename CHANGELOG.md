@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.0 — 2026-08-23
+
+- **Keyboard hints footer in the popup** — a caption line under DISPLAYS
+  (`↑↓ navigate · ←→ adjust · ⏎ toggle display · esc close`) so the
+  keyboard-first flow is discoverable in-product, not just in the README.
+  Fork patch list grows to nine; see UPSTREAM.md.
+- New `preview.png`: real three-monitor battlestation data (aliases,
+  physical sizes, resolution@scale) instead of generic content.
+- README: leads with desktop multi-monitor switching and keyboard-driven
+  on/off; documents the hints footer.
+
 ## 2.3.0 — 2026-08-23
 
 - **Overlap-proof layouts.** `apply()` computes every monitor's box and

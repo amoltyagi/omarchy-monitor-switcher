@@ -924,6 +924,21 @@ Panel {
             }
           }
 
+          // ---------- monitor-switcher fork: keyboard hints footer ----------
+          PanelSeparator {
+            foreground: root.bar.foreground
+          }
+
+          Text {
+            width: parent.width
+            text: "↑↓ navigate · ←→ adjust · ⏎ toggle display · esc close" // monitor-switcher fork
+            color: Qt.darker(root.bar.foreground, 1.4)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+          }
+
           Item {
             width: parent.width
             height: Style.space(4)

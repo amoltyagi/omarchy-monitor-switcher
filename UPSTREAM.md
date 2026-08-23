@@ -60,8 +60,12 @@ grep -n "monitor-switcher fork" Panel.qml
    verified). `toggleDisplay` remembers `root.opened`, and an
    `actionProc.onExited` handler reopens the panel ~600 ms after a
    successful toggle. Failed toggles (last-display guard) don't reopen. If
-   the disabled monitor owned this bar instance, nothing reopens — correct,
+   the disabled monitor owned this bar, nothing reopens — correct,
    since that surface is gone.
+9. **Keyboard hints footer** — a `PanelSeparator` + centered caption under
+   the DISPLAYS section (`↑↓ navigate · ←→ adjust · ⏎ toggle display · esc
+   close`). Pure discoverability for the keyboard-first toggle flow; no
+   logic.
 
 ## Re-sync procedure (after each Omarchy update)
 
@@ -70,7 +74,7 @@ grep -n "monitor-switcher fork" Panel.qml
    `diff /usr/share/omarchy/shell/plugins/panels/monitor/Panel.qml Panel.qml`
    ignoring the fenced blocks.
 2. If upstream changed: copy the fresh `Panel.qml` / `Model.js` over ours,
-   re-apply the eight patches above (all within `monitor-switcher fork`
+   re-apply the nine patches above (all within `monitor-switcher fork`
    fences), and update the version in the table.
 3. Run the smoke matrix:
    - panel opens; brightness slider + scroll-wheel brightness + OSD work
