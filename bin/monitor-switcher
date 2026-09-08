@@ -23,6 +23,9 @@
 #   monitor-switcher swap <a> <b>     Exchange two monitors' places in the pack order
 #   monitor-switcher pack             Clear all pinned positions; re-pack left-to-right
 #   monitor-switcher scale <id> <factor>  Set scale (rounded to a Hyprland-clean value)
+#   monitor-switcher refresh <id> <Hz>    Try an advertised rate for 20 seconds
+#   monitor-switcher confirm <token>     Keep the pending refresh change
+#   monitor-switcher revert <token>      Restore the previous config and layout
 #   monitor-switcher apply            Regenerate layout from config + reload
 #
 #   <id> = output name (DP-3), alias (MSI), or number — the monitor's place
@@ -43,6 +46,11 @@ STATE_DIR="$HOME/.local/state/monitor-switcher"
 STATE_FILE="$STATE_DIR/state.json"
 TOGGLES_DIR="$HOME/.local/state/omarchy/toggles/hypr"
 GENERATED_FILE="$TOGGLES_DIR/monitor-switcher.lua"
+PENDING_FILE="$STATE_DIR/refresh-pending.json"
+READY_FILE="$STATE_DIR/refresh-watchdog.json"
+LOCK_FILE="$STATE_DIR/lock"
+PENDING=null
+umask 077
 
 die() { echo "monitor-switcher: $*" >&2; exit 1; }
 
@@ -66,14 +74,26 @@ die() { echo "monitor-switcher: $*" >&2; exit 1; }
 # leaves a truncated file behind.
 MAX_FILE_BYTES=1048576
 
+guard_path() { # Refuse symlinked ancestors as well as special-file targets.
+  local f=$1 parent
+  [[ $f == /* && $f != */../* && $f != */./* ]] || return 1
+  parent=$(dirname -- "$f")
+  while [[ $parent != / ]]; do
+    [[ ! -L $parent && ( ! -e $parent || -d $parent ) ]] || return 1
+    parent=$(dirname -- "$parent")
+  done
+  [[ ! -L $f && ( ! -e $f || -f $f ) ]]
+}
+
 safe_read() { # <file> — stdout: content iff a real, regular, <=cap file
   local f=$1
+  guard_path "$f" || return 1
   [[ -f $f && ! -L $f ]] || return 1 # fast path for the common missing file
-  timeout 3 bash -c '
+  timeout -k 1 3 bash -c '
     f=$1; max=$2
     exec {fd}<"$f" 2> /dev/null || exit 1
     # Inspect the OPENED file, not the pathname: immune to post-open swaps.
-    [[ $(stat -Lc %F "/proc/self/fd/$fd" 2> /dev/null) == "regular file" ]] || exit 1
+    [[ -f /proc/self/fd/$fd ]] || exit 1
     size=$(stat -Lc %s "/proc/self/fd/$fd" 2> /dev/null) || exit 1
     (( size >= 0 && size <= max )) || exit 1
     cat <&"$fd"
@@ -96,6 +116,7 @@ read_config() { # stdout: validated config; an unreadable config is fatal
 
 write_file() { # <file> — stdin: content. Atomic, symlink-refusing write.
   local f=$1 dir tmp
+  guard_path "$f" || die "refusing unsafe path: $f"
   dir=$(dirname -- "$f")
   mkdir -p -- "$dir"
   [[ -d $dir && ! -L $dir ]] || die "refusing to write into $dir: not a real directory (planted link?)"
@@ -108,6 +129,132 @@ write_file() { # <file> — stdin: content. Atomic, symlink-refusing write.
   mv -f -- "$tmp" "$f"
 }
 
+remove_file() {
+  guard_path "$1" || die "refusing unsafe path: $1"
+  rm -f -- "$1"
+}
+
+lock_backend() {
+  guard_path "$LOCK_FILE" || die "refusing unsafe lock path: $LOCK_FILE"
+  mkdir -p -- "$STATE_DIR"
+  # O_RDWR does not block if a FIFO is swapped in; the descriptor check rejects it.
+  exec {LOCK_FD}<>"$LOCK_FILE"
+  [[ -f /proc/$$/fd/$LOCK_FD ]] || die "unsafe lock file"
+  flock -x "$LOCK_FD"
+  guard_path "$LOCK_FILE" && [[ $LOCK_FILE -ef /proc/$$/fd/$LOCK_FD ]] || die "lock path changed while waiting"
+}
+
+read_pending() {
+  PENDING=null
+  guard_path "$PENDING_FILE" || die "refusing unsafe pending transaction path"
+  [[ -e $PENDING_FILE ]] || return 0
+  PENDING=$(read_json "$PENDING_FILE") || die "cannot read pending refresh transaction"
+  jq -e '
+    type == "object" and (.token | type == "string" and test("^[a-f0-9]{32}$"))
+    and (.output | type == "string") and (.mode | type == "string")
+    and (.expiresAt | type == "number" and . > 0 and . == floor)
+    and (.reverting == null or (.reverting | type == "boolean"))
+    and (.config | type == "string")
+    and (.generated == null or (.generated | type == "string"))
+  ' <<<"$PENDING" > /dev/null || die "invalid pending refresh transaction; refusing changes"
+}
+
+require_token() {
+  [[ $1 =~ ^[a-f0-9]{32}$ ]] || die "invalid refresh token"
+  [[ $PENDING != null ]] || die "no refresh change is pending"
+  [[ $(jq -r .token <<<"$PENDING") == "$1" ]] || die "refresh token does not match pending change"
+}
+
+rollback_required() {
+  [[ $PENDING != null ]] && jq -e --argjson now "$(date +%s)" \
+    '.reverting == true or .expiresAt <= $now' <<<"$PENDING" > /dev/null
+}
+
+restore_refresh() { # Caller holds the lock. Keep the backup until reload succeeds.
+  require_token "$1"
+  local failed=0
+  # Persist this first: neither a failed reload nor a restart may make Keep safe again.
+  PENDING=$(jq '.reverting = true' <<<"$PENDING") || return 1
+  printf '%s\n' "$PENDING" | write_file "$PENDING_FILE" || return 1
+  (jq -j .config <<<"$PENDING" | write_file "$CONFIG_FILE") || failed=1
+  if [[ $(jq -r '.generated == null' <<<"$PENDING") == true ]]; then
+    (remove_file "$GENERATED_FILE") || failed=1
+  else
+    (jq -j .generated <<<"$PENDING" | write_file "$GENERATED_FILE") || failed=1
+  fi
+  [[ $failed == 0 ]] || { echo "monitor-switcher: rollback could not restore both files; backup retained in $PENDING_FILE" >&2; return 1; }
+  checked_reload || { echo "monitor-switcher: previous files restored, but rollback reload failed; rollback remains pending for retry" >&2; return 1; }
+  remove_file "$PENDING_FILE" || return 1
+  PENDING=null
+  echo "refresh reverted; previous config and generated layout restored"
+}
+
+bounded_hyprctl() (
+  # Do not lend the lock to compositor clients. Kill the entire timeout process
+  # group immediately on expiry, including children that ignore TERM or hold pipes.
+  exec {LOCK_FD}>&-
+  timeout -s KILL 3 bash -c '
+    reply=$(hyprctl "$@" 2>&1)
+    status=$?
+    printf "%s\n" "$reply"
+    exit "$status"
+  ' _ "$@"
+)
+
+checked_reload() {
+  local reply errors
+  reply=$(bounded_hyprctl reload) \
+    || { echo "monitor-switcher: reload failed or timed out: $reply" >&2; return 1; }
+  [[ $reply == ok ]] || { echo "monitor-switcher: reload rejected: $reply" >&2; return 1; }
+  errors=$(bounded_hyprctl configerrors -j) \
+    || { echo "monitor-switcher: could not check configerrors: $errors" >&2; return 1; }
+  # Some Hyprland builds report a clean configuration as [""] rather than [].
+  jq -e 'type == "array" and all(.[]; type == "string" and test("^\\s*$"))' <<<"$errors" > /dev/null 2>&1 \
+    || { echo "monitor-switcher: compositor configerrors: $errors" >&2; return 1; }
+}
+
+refresh_watchdog() {
+  local token=$1
+  [[ $token =~ ^[a-f0-9]{32}$ ]] || die "invalid refresh token"
+  # Startup acknowledgement must not take the lock still held by the launcher.
+  read_pending
+  require_token "$token"
+  jq -n --arg token "$token" --argjson pid "$$" '{token: $token, pid: $pid}' | write_file "$READY_FILE"
+  while :; do
+    sleep 1
+    lock_backend
+    read_pending
+    [[ $PENDING != null && $(jq -r .token <<<"$PENDING") == "$token" ]] || return 0
+    if rollback_required && restore_refresh "$token"; then return 0; fi
+    flock -u "$LOCK_FD"
+    exec {LOCK_FD}>&-
+  done
+}
+
+launch_watchdog() {
+  local token=$1 script pid ready i
+  script=$(readlink -f -- "${BASH_SOURCE[0]}")
+  remove_file "$READY_FILE"
+  # A fresh session, no terminal/pipes, and no inherited flock (or caller FDs).
+  setsid bash -c '
+    for fd in /proc/$$/fd/*; do
+      n=${fd##*/}
+      if [[ $n =~ ^[0-9]+$ ]] && (( n > 2 )); then eval "exec $n>&-"; fi
+    done
+    exec bash "$1" _refresh-watchdog "$2"
+  ' _ "$script" "$token" </dev/null >/dev/null 2>&1 &
+  pid=$!
+  for i in $(seq 1 40); do
+    if ready=$(read_json "$READY_FILE") && jq -e --arg t "$token" '.token == $t' <<<"$ready" > /dev/null; then
+      kill -0 "$pid" 2>/dev/null || break
+      return 0
+    fi
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.05
+  done
+  die "could not launch refresh rollback watchdog; change refused"
+}
+
 # hyprctl can answer empty, partial, or mid-transition while the compositor
 # is busy re-enumerating outputs (reloads, physical hotplug, the watcher's
 # modeless-recovery loop). Callers write files derived from this data, so a
@@ -115,9 +262,9 @@ write_file() { # <file> — stdin: content. Atomic, symlink-refusing write.
 # enabled monitor has a real mode) that is identical across two reads
 # (geometry settled), else keep retrying briefly.
 live() {
-  local out ok geom prev_geom="" i
+  local out ok geom prev_geom="" i deadline=$((SECONDS + 4))
   for i in $(seq 1 10); do
-    if out=$(hyprctl monitors all -j 2> /dev/null | head -c "$MAX_FILE_BYTES") && [[ -n $out ]]; then
+    if out=$(timeout -k 1 1 hyprctl monitors all -j 2> /dev/null | head -c "$MAX_FILE_BYTES") && [[ -n $out ]]; then
       ok=$(jq -r '
         if (type == "array" and length > 0
             and all(.[]; .disabled == true or ((.width // 0) > 0 and (.height // 0) > 0)))
@@ -132,6 +279,7 @@ live() {
         fi
       fi
     fi
+    (( SECONDS < deadline )) || break
     sleep 0.3
   done
   die "hyprctl monitor data did not settle (compositor busy?)"
@@ -193,7 +341,7 @@ resolve() { # <id>
   local cfg
   cfg=$(read_config)
   if [[ $1 =~ ^[0-9]+$ ]]; then
-    jq -r --argjson n "$1" '.[$n - 1].output // empty' <<<"$cfg"
+    jq -r --arg n "$1" '($n | tonumber) as $n | select($n >= 1 and $n <= length) | .[$n - 1].output // empty' <<<"$cfg"
     return
   fi
   jq -r --arg id "$1" '
@@ -333,20 +481,70 @@ apply() {
     generated+=$(printf '\nhl.monitor({ output = "%s", mode = "%s", position = "%sx%s", scale = %s, transform = %s })' \
       "$output" "$mode" "$px" "$py" "$scale" "$transform")
   done < <(jq -c '.[]' <<<"$cfg")
-  printf '%s\n' "$generated" | write_file "$GENERATED_FILE"
+  local previous=null
+  if [[ ${1:-} != refresh ]]; then
+    guard_path "$GENERATED_FILE" || die "refusing unsafe generated layout path"
+    if [[ -e $GENERATED_FILE ]]; then
+      previous=$(safe_read "$GENERATED_FILE" | jq -Rs .) || die "cannot back up generated layout"
+    fi
+  fi
+  printf '%s\n' "$generated" | write_file "$GENERATED_FILE" || return 1
 
-  hyprctl reload > /dev/null
+  if [[ ${1:-} == refresh ]]; then
+    # Validation/generation time must not consume the user's confirmation window.
+    PENDING=$(jq --argjson expires "$(( $(date +%s) + 20 ))" '.expiresAt = $expires' <<<"$PENDING")
+    printf '%s\n' "$PENDING" | write_file "$PENDING_FILE"
+  fi
+  checked_reload && return 0
+  # Refresh owns its full backup/watchdog rollback; ordinary callers restore config/state.
+  [[ ${1:-} != refresh ]] || return 1
+  if [[ $previous == null ]]; then
+    (remove_file "$GENERATED_FILE") || return 1
+  else
+    jq -j . <<<"$previous" | write_file "$GENERATED_FILE" || return 1
+  fi
+  checked_reload || echo "monitor-switcher: previous generated layout restored, but rollback reload failed" >&2
+  return 1
+}
+
+refresh_info() { # <config> <live> <state>; modes come ONLY from advertised strings.
+  jq -n --argjson cfg "$1" --argjson lv "$2" --argjson st "$3" '
+    [$cfg[] as $c
+      | ([$lv[] | select(.name == $c.output)][0] // null) as $m
+      | (if (($c.mode // "preferred") | test("^[0-9]+x[0-9]+")) then
+           ($c.mode | capture("^(?<w>[0-9]+)x(?<h>[0-9]+)")) | [(.w | tonumber), (.h | tonumber)]
+         else [($c.mode_w // 0), ($c.mode_h // 0)] end) as $size
+      | {output: $c.output, configuredWidth: $size[0], configuredHeight: $size[1],
+         transform: ($c.transform // 0),
+         refreshRate: (if $m != null and $m.disabled != true and (($st.disabled // [] | index($c.output)) == null)
+                       then ($m.refreshRate // null) else null end),
+         refreshModes: ([$m.availableModes[]? | strings
+           | capture("^(?<mode>(?<w>[0-9]+)x(?<h>[0-9]+)@(?<rate>[0-9]+(?:\\.[0-9]+)?))(?:Hz)?$")
+           | select((.w | tonumber) == $size[0] and (.h | tonumber) == $size[1])
+           | {mode: .mode, rate: (.rate | tonumber)} | select(.rate > 0)] | unique_by(.rate))}
+    ]'
 }
 
 state_json() {
-  [[ -s $CONFIG_FILE ]] || seed_config
-  local lv cfg
+  if [[ $STATE_READ_ONLY == false ]]; then [[ -s $CONFIG_FILE ]] || seed_config; fi
+  local lv cfg st refresh
+  cfg=$(read_config)
+  st=$(read_state)
+  if [[ $STATE_READ_ONLY == true ]]; then
+    # We have a coherent snapshot and will not write; polling must not delay rollback.
+    flock -u "$LOCK_FD"
+    exec {LOCK_FD}>&-
+  fi
   lv=$(live)
-  cfg=$(read_config | adopt_new "$lv")
-  cfg=$(backfill_geometry "$cfg" "$lv")
-  [[ -n $cfg ]] || die "config derivation came back empty; $CONFIG_FILE left untouched"
-  printf '%s\n' "$cfg" | write_file "$CONFIG_FILE"
-  jq -n --argjson cfg "$cfg" --argjson lv "$lv" --argjson st "$(read_state)" '
+  if [[ $STATE_READ_ONLY == false ]]; then
+    cfg=$(adopt_new "$lv" <<<"$cfg")
+    cfg=$(backfill_geometry "$cfg" "$lv")
+    [[ -n $cfg ]] || die "config derivation came back empty; $CONFIG_FILE left untouched"
+    printf '%s\n' "$cfg" | write_file "$CONFIG_FILE"
+  fi
+  refresh=$(refresh_info "$cfg" "$lv" "$st")
+  jq -n --argjson cfg "$cfg" --argjson lv "$lv" --argjson st "$st" \
+    --argjson refresh "$refresh" --argjson pending "$PENDING" '
     # Physical diagonal in inches from EDID-reported mm (0 = unknown).
     def inches_of($m):
       (($m.physicalWidth // 0) * ($m.physicalWidth // 0)
@@ -384,7 +582,7 @@ state_json() {
           height: ($m.height // 0),
           inches: $in,
           kind: (if $m != null then kind_of($m; $in) else "monitor" end)
-        }
+        } + ($refresh[] | select(.output == $c.output))
     ] as $monitors
     # Live overlap check (enabled, non-mirrored monitors only): mirrors share
     # the geometry of their target by design, disabled ones take no space.
@@ -392,6 +590,7 @@ state_json() {
          | . as $m | (lsz($m)) as $s
          | {output: $m.name, x: ($m.x // 0), y: ($m.y // 0), w: $s[0], h: $s[1]} ]) as $boxes
     | { monitors: $monitors,
+        refreshPending: ($pending | if . == null then null else {token, output, mode, expiresAt, reverting: (.reverting // false)} end),
         enabledCount: ([$monitors[] | select(.enabled)] | length),
         overlaps: ([$boxes | combinations(2)
                     | select(.[0].output < .[1].output)
@@ -623,11 +822,122 @@ cmd_plan() { # [--json]
   [[ -z $collision ]] || echo "WARNING: layout would overlap: $collision" >&2
 }
 
+verify_refresh_mode() { # Invoked under an overall five-second timeout.
+  local output=$1 width=$2 height=$3 rate=$4 lv settled=0
+  while :; do
+    if lv=$(timeout -k 1 1 hyprctl monitors all -j 2>/dev/null | head -c 1048576) \
+      && jq -e --arg o "$output" --argjson w "$width" --argjson h "$height" --argjson r "$rate" '
+        any(.[]; .name == $o and .disabled != true and .width == $w and .height == $h
+            and (.refreshRate | type == "number")
+            and ((.refreshRate * 100 | round) == ($r * 100 | round)))
+      ' <<<"$lv" >/dev/null 2>&1; then
+      settled=$((settled + 1))
+      (( settled >= 2 )) && return 0
+    else
+      settled=0
+    fi
+    sleep 0.2
+  done
+}
+
+refresh_exit() {
+  local status=$1
+  trap - EXIT HUP INT TERM
+  if (( status != 0 )) && [[ $PENDING != null ]]; then
+    echo "monitor-switcher: refresh failed; restoring previous config and generated layout" >&2
+    restore_refresh "$(jq -r .token <<<"$PENDING")" || true
+  fi
+  exit "$status"
+}
+
+cmd_refresh() { # <id> <Hz>
+  local id=$1 rate=$2 output cfg lv st info mode newcfg collision token generated backup
+  [[ $rate =~ ^[0-9]+([.][0-9]+)?$ ]] || die "refresh rate must be a positive number (got: $rate)"
+  rate=$(jq -en --arg r "$rate" '$r | tonumber | select(isfinite and . > 0)') \
+    || die "refresh rate must be a positive finite number"
+  cfg=$(read_config)
+  output=$(resolve "$id")
+  [[ -n $output ]] || die "unknown monitor: $id"
+  lv=$(live)
+  st=$(read_state)
+  jq -e --arg o "$output" --argjson st "$st" '
+    any(.[]; .name == $o and .disabled != true and .width > 0 and .height > 0)
+    and (($st.disabled // [] | index($o)) == null)
+  ' <<<"$lv" > /dev/null || die "$output must be connected and active to change refresh rate"
+  info=$(refresh_info "$cfg" "$lv" "$st" | jq -c --arg o "$output" '.[] | select(.output == $o)')
+  mode=$(jq -r --argjson r "$rate" '.refreshModes[] | select(.rate == $r) | .mode' <<<"$info")
+  [[ -n $mode ]] || die "$rate Hz is not advertised at the configured resolution for $output"
+  newcfg=$(jq --arg o "$output" --arg m "$mode" \
+    'map(if .output == $o then .mode = $m | del(.mode_w, .mode_h) else . end)' <<<"$cfg")
+  collision=$(find_overlap "$(layout_boxes "$newcfg" "$lv")")
+  [[ -z $collision ]] || die "refusing to apply overlapping layout: $collision"
+
+  guard_path "$GENERATED_FILE" || die "refusing unsafe generated layout path"
+  generated=null
+  if [[ -e $GENERATED_FILE ]]; then
+    generated=$(safe_read "$GENERATED_FILE" | jq -Rs .) || die "cannot back up generated layout"
+  fi
+  backup=$(safe_read "$CONFIG_FILE" | jq -Rs .) || die "cannot back up config"
+  token=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+  [[ $token =~ ^[a-f0-9]{32}$ ]] || die "could not generate refresh token"
+  PENDING=$(jq -n --arg token "$token" --arg output "$output" --arg mode "$mode" \
+    --argjson expires "$(( $(date +%s) + 20 ))" --argjson config "$backup" --argjson generated "$generated" \
+    '{token: $token, output: $output, mode: $mode, expiresAt: $expires, config: $config, generated: $generated}')
+  (( $(LC_ALL=C printf '%s\n' "$PENDING" | wc -c) <= MAX_FILE_BYTES )) || die "refresh backup is too large"
+  printf '%s\n' "$PENDING" | write_file "$PENDING_FILE"
+  trap 'refresh_exit $?' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  launch_watchdog "$token"
+  printf '%s\n' "$newcfg" | write_file "$CONFIG_FILE"
+  apply refresh
+  timeout -k 1 5 bash -o pipefail -c "$(declare -f verify_refresh_mode); verify_refresh_mode \"\$@\"" _ \
+    "$output" "$(jq -r .configuredWidth <<<"$info")" "$(jq -r .configuredHeight <<<"$info")" "$rate" \
+    || die "active mode verification failed for $output ($mode)"
+  trap - EXIT HUP INT TERM
+  echo "$output refresh $mode pending; confirm $token by $(jq -r .expiresAt <<<"$PENDING") (20-second automatic rollback)"
+}
+
+cmd_confirm() {
+  require_token "$1"
+  if rollback_required; then
+    restore_refresh "$1" >&2 || true
+    die "refresh expired or rollback already started; confirmation refused"
+  fi
+  remove_file "$PENDING_FILE"
+  PENDING=null
+  echo "refresh confirmed; saved mode kept"
+}
+
 usage() {
   # Single-source: print the header comment's Usage block, robust to edits.
   sed -n '/^# Usage:/,/^#   SUPER\+SHIFT\+CTRL/p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
+
+if [[ ${1:-} == _refresh-watchdog ]]; then
+  [[ $# -eq 2 ]] || usage
+  refresh_watchdog "$2"
+  exit
+fi
+
+lock_backend
+read_pending
+STATE_READ_ONLY=false
+if [[ $PENDING != null ]]; then STATE_READ_ONLY=true; fi
+if rollback_required; then
+  case ${1:-} in
+    confirm|revert) ;; # These validate their token before attempting recovery.
+    *) restore_refresh "$(jq -r .token <<<"$PENDING")" >&2 || true ;;
+  esac
+fi
+if [[ $PENDING != null ]]; then
+  case ${1:-} in
+    state|confirm|revert) ;;
+    *) die "refresh change pending; confirm or revert its token before other commands" ;;
+  esac
+fi
 
 case "${1:-}" in
   state)
@@ -641,6 +951,9 @@ case "${1:-}" in
   swap)    [[ $# -eq 3 ]] || usage; cmd_swap "$2" "$3" ;;
   pack)    cmd_pack ;;
   scale)   [[ $# -eq 3 ]] || usage; cmd_scale "$2" "$3" ;;
+  refresh) [[ $# -eq 3 ]] || usage; cmd_refresh "$2" "$3" ;;
+  confirm) [[ $# -eq 2 ]] || usage; cmd_confirm "$2" ;;
+  revert)  [[ $# -eq 2 ]] || usage; restore_refresh "$2" ;;
   apply)   apply ;;
   *)       usage ;;
 esac

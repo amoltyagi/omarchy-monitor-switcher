@@ -36,29 +36,63 @@ Panel {
   property var displays: []
   property int enabledDisplayCount: 0
 
-  // Carry sub-notch touchpad deltas between wheel events.
-  property real wheelAccumulator: 0
+  // monitor-switcher fork: supported refresh stops and independent backend confirmation.
+  readonly property var focusedMeta: switcherMeta[focusedMonitor] || ({})
+  readonly property var refreshModes: focusedMeta.enabled ? (focusedMeta.refreshModes || []) : []
+  readonly property var galleryMonitors: Object.keys(switcherMeta)
+    .map(function(key) { return root.switcherMeta[key] })
+    .filter(function(m) { return m.connected })
+    .sort(function(a, b) { return a.num - b.num })
+  property var refreshPending: null
+  property double refreshClock: Date.now() / 1000
+  property int refreshPreviewIndex: -1
+  property string refreshPreviewOutput: ""
+  property real refreshPreviewRate: 0
+  property string actionError: ""
+  readonly property bool layoutBusy: actionProc.running || refreshProc.running || refreshPending !== null
+  readonly property int refreshSeconds: refreshPending ? Math.max(0, Math.ceil(refreshPending.expiresAt - refreshClock)) : 0
+  readonly property int liveRefreshIndex: Model.matchingRefreshIndex(refreshModes, focusedMeta.refreshRate)
+  readonly property int refreshIndex: refreshPreviewIndex >= 0 ? refreshPreviewIndex : Math.max(0, liveRefreshIndex)
 
-  // Cursor model shared by keyboard and mouse. Sections:
-  //   "brightness" - single slider row, selectedIndex = -1 sentinel
-  //                  (mirrors Audio's slider rows). Only present if a
-  //                  controllable backlight was detected.
-  //   "scale"      - 6 Button scale presets; treated as a single
-  //                  horizontal row from j/k's perspective. h/l moves
-  //                  between presets, identical to bluetooth's header.
-  //   "monitors"   - vertical display row list for enabling/disabling displays;
-  //                  j/k walks each row.
-  // Mouse hover on a target updates root state via the components' `hovered`
-  // signal so keyboard cursor and pointer share one highlight.
-  readonly property var scalePresets: ["1", "1.25", "1.6", "2", "3", "4"]
-  readonly property var scaleValues: {
-    for (var i = 0; i < displays.length; i++) {
-      var display = displays[i]
-      if (display && display.focused)
-        return Model.availableScales(scalePresets, display.width, display.height)
-    }
-    return scalePresets
+  function previewRefresh(index) {
+    if (layoutBusy || !refreshModes[index]) return
+    if (refreshPreviewOutput !== "" && refreshPreviewOutput !== focusedMonitor) return
+    refreshPreviewOutput = focusedMonitor
+    refreshPreviewRate = refreshModes[index].rate
+    refreshPreviewIndex = index
   }
+
+  function commitRefresh() {
+    if (layoutBusy || refreshPreviewIndex < 0) return
+    var output = refreshPreviewOutput
+    var rate = refreshPreviewRate
+    refreshPreviewOutput = ""
+    if (!output || output !== focusedMonitor
+        || Math.round(Number(focusedMeta.refreshRate) * 100) === Math.round(rate * 100)) {
+      refreshPreviewIndex = -1
+      return
+    }
+    runRefreshAction("refresh", output, String(rate))
+  }
+
+  function runRefreshAction(verb, id, value) {
+    if (refreshProc.running || actionProc.running) return
+    actionError = ""
+    // pipefail preserves backend failures despite the bounded collector.
+    refreshProc.command = ["bash", "-o", "pipefail", "-c", "\"$1\" \"$2\" \"$3\" ${4:+\"$4\"} 2>&1 | head -c 65536",
+      "monitor-switcher", root.scriptPath, verb, id, value || ""]
+    refreshProc.running = true
+  }
+
+  // monitor-switcher fork: gallery buttons and sliders share the keyboard cursor.
+  // Slider rows use -1; gallery and confirmation buttons use their item index.
+  readonly property var scalePresets: ["1", "1.25", "1.6", "2", "3", "4"]
+  readonly property var scaleValues: Model.scaleStops(scalePresets, focusedMeta.scale,
+    focusedMeta.configuredWidth, focusedMeta.configuredHeight)
+  property int scalePreviewIndex: -1
+  property string scalePreviewOutput: ""
+  property string scalePreviewValue: ""
+  readonly property int scaleIndex: scalePreviewIndex >= 0 ? scalePreviewIndex : Math.max(0, activeScaleIndex())
   property string focusSection: "scale"
   property int selectedIndex: 0
   property bool cursorActive: false
@@ -83,44 +117,34 @@ Panel {
 
   readonly property var visibleSections: {
     var list = []
+    if (refreshPending) list.push("confirmation") // monitor-switcher fork
+    if (galleryMonitors.length > 0) list.push("monitors")
+    if (refreshModes.length > 0) list.push("refresh")
     if (brightnessAvailable) list.push("brightness")
     list.push("textsize")
     list.push("scale")
-    if (displays.length > 1) list.push("monitors")
     return list
   }
 
   function sectionCount(section) {
+    if (section === "confirmation") return 2 // monitor-switcher fork: Revert / Keep
+    if (section === "refresh") return 0
     if (section === "brightness") return 0  // only the slider sentinel at -1
     if (section === "textsize") return 0    // slider sentinel at -1, like brightness
-    if (section === "scale") return scaleValues.length
-    if (section === "monitors") return displays.length
+    if (section === "scale") return 0
+    if (section === "monitors") return galleryMonitors.length
     return 0
   }
 
   function sectionIsSingleRow(section) {
-    // brightness and text size are lone sliders; scale presets sit horizontally.
+    // Keep j/k walking every monitor, as in the original display list.
     return section === "brightness" || section === "textsize" || section === "scale"
+      || section === "refresh" || section === "confirmation"
   }
 
   function sectionFirstIndex(section) {
-    if (section === "brightness" || section === "textsize") return -1
+    if (section === "brightness" || section === "textsize" || section === "refresh" || section === "scale") return -1
     return 0
-  }
-
-  // monitor-switcher fork: rows sorted by the backend's config-order number
-  // (pack order, left-to-right) so the list reads like the physical layout
-  // and matches `monitor-switcher toggle N`. Falls back to compositor order
-  // until meta arrives.
-  function sortedDisplays() {
-    var meta = root.switcherMeta || {}
-    var arr = root.displays.slice()
-    arr.sort(function(a, b) {
-      var na = (meta[a.name] && meta[a.name].num) || 999
-      var nb = (meta[b.name] && meta[b.name].num) || 999
-      return na - nb
-    })
-    return arr
   }
 
   function moveCursor(delta) {
@@ -153,14 +177,12 @@ Panel {
     }
   }
 
-  // h/l: in scale section, walks the preset row; everywhere else, no-op
-  // because adjustBrightness handles horizontal motion on the brightness
-  // slider.
+  // h/l walks gallery and confirmation buttons without activating them.
   function moveCursorH(delta) {
-    if (focusSection !== "scale") return
+    if (focusSection !== "monitors" && focusSection !== "confirmation") return
     var next = selectedIndex + delta
     if (next < 0) next = 0
-    if (next > scaleValues.length - 1) next = scaleValues.length - 1
+    if (next > sectionCount(focusSection) - 1) next = sectionCount(focusSection) - 1
     selectedIndex = next
   }
 
@@ -171,15 +193,16 @@ Panel {
   }
 
   function activateCursor() {
-    if (focusSection === "scale" && selectedIndex >= 0 && selectedIndex < scaleValues.length) {
-      setScale(scaleValues[selectedIndex])
+    // monitor-switcher fork: keyboard previews refresh with h/l, Enter applies.
+    if (focusSection === "refresh") { commitRefresh(); return }
+    if (focusSection === "confirmation" && refreshPending) {
+      runRefreshAction(selectedIndex === 1 ? "confirm" : "revert", refreshPending.token, "")
       return
     }
-    // monitor-switcher fork: index the same pack-order-sorted rows the
-    // Repeater renders, so keyboard activation hits the row under the cursor.
-    if (focusSection === "monitors" && selectedIndex >= 0 && selectedIndex < displays.length) {
-      var d = sortedDisplays()[selectedIndex]
-      if (d) toggleDisplay(d.name, d.enabled)
+    if (focusSection === "scale") { commitScale(); return }
+    if (focusSection === "monitors" && selectedIndex >= 0 && selectedIndex < galleryMonitors.length) {
+      var d = galleryMonitors[selectedIndex]
+      if (d) toggleDisplay(d.output, d.enabled)
     }
     // brightness: no separate action; the slider value is the action.
   }
@@ -194,8 +217,7 @@ Panel {
     }
     var count = sectionCount(focusSection)
     if (sectionIsSingleRow(focusSection)) {
-      // brightness/text size use the -1 sentinel; scale clamps into the presets.
-      if (focusSection === "brightness" || focusSection === "textsize") selectedIndex = -1
+      if (focusSection === "brightness" || focusSection === "textsize" || focusSection === "refresh" || focusSection === "scale") selectedIndex = -1
       else if (selectedIndex < 0 || selectedIndex >= count) selectedIndex = 0
       return
     }
@@ -227,6 +249,11 @@ Panel {
       flick.contentY = bottom + margin - flick.height
   }
 
+  function scrollPanel(pixels) {
+    var flick = scrollArea.contentItem
+    flick.contentY = Math.max(0, Math.min(Math.max(0, flick.contentHeight - flick.height), flick.contentY - pixels))
+  }
+
   function brightnessIpc(percent) {
     var value = Number(percent)
     root.setBrightness(value)
@@ -239,6 +266,10 @@ Panel {
       brightnessAvailable: root.brightnessAvailable,
       focusedMonitor: root.focusedMonitor,
       scale: root.monitorScale,
+      refreshRate: root.focusedMeta.refreshRate || null, // monitor-switcher fork
+      refreshModes: root.refreshModes,
+      refreshPending: root.refreshPending,
+      actionError: root.actionError,
       displays: root.displays
     })
   }
@@ -281,34 +312,37 @@ Panel {
     brightnessDebounce.restart()
   }
 
-  function showBrightnessOsd(percent) {
-    if (!bar || !bar.shell) return
-    bar.shell.summon("omarchy.osd", JSON.stringify({
-      icon: "brightness",
-      value: percent
-    }))
-  }
-
   function normalizeScale(scale) {
     return Model.normalizeScale(scale)
   }
 
   function activeScaleIndex() {
-    for (var i = 0; i < displays.length; i++) {
-      var display = displays[i]
-      if (display && display.focused)
-        return Model.matchingScaleIndex(scaleValues, monitorScale, display.width, display.height)
-    }
-    return -1
+    return Model.matchingScaleIndex(scaleValues, focusedMeta.scale,
+      focusedMeta.configuredWidth, focusedMeta.configuredHeight)
   }
 
   function effectiveScale(scale) {
-    for (var i = 0; i < displays.length; i++) {
-      var display = displays[i]
-      if (display && display.focused)
-        return Model.cleanScale(scale, display.width, display.height)
+    return Model.cleanScale(scale, focusedMeta.configuredWidth, focusedMeta.configuredHeight)
+  }
+
+  function previewScale(index) {
+    if (layoutBusy || !scaleValues[index]) return
+    if (scalePreviewOutput !== "" && scalePreviewOutput !== focusedMonitor) return
+    scalePreviewOutput = focusedMonitor
+    scalePreviewValue = scaleValues[index]
+    scalePreviewIndex = index
+  }
+
+  function commitScale() {
+    if (layoutBusy || scalePreviewIndex < 0) return
+    var output = scalePreviewOutput
+    var value = scalePreviewValue
+    scalePreviewOutput = ""
+    if (!output || output !== focusedMonitor || normalizeScale(effectiveScale(value)) === normalizeScale(focusedMeta.scale)) {
+      scalePreviewIndex = -1
+      return
     }
-    return normalizeScale(scale)
+    setScale(value)
   }
 
   // Playful mood-name for a given brightness percent. Bands intentionally
@@ -352,25 +386,28 @@ Panel {
   }
 
   function toggleDisplay(name, enabled) {
-    if (!name) return
+    if (!name || root.layoutBusy) return // monitor-switcher fork: serialize layout actions
     if (enabled && root.enabledDisplayCount <= 1) return
 
     root.reopenAfterAction = root.opened
     // Bound the collector input at the source: the installed StdioCollector
     // has no size limit, so cap bytes here (SIGPIPE contains a flood).
-    actionProc.command = ["bash", "-c", "\"$1\" toggle \"$2\" | head -c 65536", "monitor-switcher", root.scriptPath, name]
+    actionError = ""
+    actionProc.command = ["bash", "-o", "pipefail", "-c", "\"$1\" toggle \"$2\" 2>&1 | head -c 65536", "monitor-switcher", root.scriptPath, name]
     if (!actionProc.running) actionProc.running = true
   }
   // === end monitor-switcher fork ===========================================
 
   function setScale(scale) {
+    if (root.layoutBusy) return // monitor-switcher fork
     // monitor-switcher fork: route scale through the backend — persisted in
     // config.json and re-applied through the overlap validator, instead of
     // the upstream tool's runtime-only position="auto" poke that our
     // generated layout reverts on the next reload (and whose mode string,
     // built from the live refresh rate, some panels reject outright).
     // Still bounded: StdioCollector has no limit.
-    actionProc.command = ["bash", "-c", "\"$1\" scale \"$2\" \"$3\" | head -c 65536", "monitor-switcher", root.scriptPath, root.focusedMonitor, scale]
+    actionError = ""
+    actionProc.command = ["bash", "-o", "pipefail", "-c", "\"$1\" scale \"$2\" \"$3\" 2>&1 | head -c 65536", "monitor-switcher", root.scriptPath, root.focusedMonitor, scale]
     if (!actionProc.running) actionProc.running = true
   }
 
@@ -429,21 +466,56 @@ Panel {
   onOpenedChanged: {
     if (opened) {
       refresh()
-      if (brightnessAvailable) {
+      if (refreshPending) { // monitor-switcher fork: prioritize safe confirmation
+        focusSection = "confirmation"
+        selectedIndex = 0
+      } else if (galleryMonitors.length > 0) {
+        focusSection = "monitors"
+        selectedIndex = Math.max(0, galleryMonitors.findIndex(function(m) { return m.output === root.focusedMonitor }))
+      } else if (brightnessAvailable) {
         focusSection = "brightness"
         selectedIndex = -1
       } else {
         focusSection = "scale"
-        selectedIndex = 0
+        selectedIndex = -1
       }
       cursorActive = false
+    } else if (!refreshProc.running) {
+      refreshPreviewIndex = -1
+      refreshPreviewOutput = ""
+      if (!actionProc.running) {
+        scalePreviewIndex = -1
+        scalePreviewOutput = ""
+      }
     }
   }
 
   onBrightnessAvailableChanged: clampCursor()
   onDisplaysChanged: clampCursor()
   onScaleValuesChanged: clampCursor()
+  onGalleryMonitorsChanged: clampCursor()
   onVisibleSectionsChanged: clampCursor()
+  // monitor-switcher fork: an uncommitted keyboard preview must not follow focus.
+  onFocusedMonitorChanged: {
+    if (!scaleSlider.dragging) {
+      scalePreviewIndex = -1
+      scalePreviewOutput = ""
+    }
+    if (!refreshSlider.dragging) {
+      refreshPreviewIndex = -1
+      refreshPreviewOutput = ""
+    }
+  }
+  onRefreshPendingChanged: {
+    refreshClock = Date.now() / 1000
+    if (refreshPending) {
+      refreshPreviewIndex = -1
+      refreshPreviewOutput = ""
+      focusSection = "confirmation"
+      selectedIndex = 0
+      cursorActive = true
+    }
+  }
 
   // Only poll while the panel is open; the bar glyph tracks monitor count via
   // Quickshell.screens, and open-time refresh + Component.onCompleted cover the
@@ -488,7 +560,7 @@ Panel {
   Process {
     id: switcherProc
     // monitor-switcher fork: bound collector input (StdioCollector has no limit)
-    command: ["bash", "-c", "\"$1\" state --json | head -c 262144", "monitor-switcher", root.scriptPath]
+    command: ["bash", "-o", "pipefail", "-c", "\"$1\" state --json | head -c 262144", "monitor-switcher", root.scriptPath]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -496,27 +568,20 @@ Panel {
         try {
           var parsed = JSON.parse(String(text || ""))
           var list = parsed && parsed.monitors
+          if (!Array.isArray(list)) return
           if (list) {
             for (var i = 0; i < list.length; i++) {
               var m = list[i]
               if (m && m.output) map[m.output] = m
             }
           }
-        } catch (e) { }
+          // monitor-switcher fork: do not reset the keyboard cursor on each countdown poll.
+          var pending = parsed.refreshPending || null
+          if (JSON.stringify(pending) !== JSON.stringify(root.refreshPending)) root.refreshPending = pending
+        } catch (e) { return }
         root.switcherMeta = map
       }
     }
-  }
-  // monitor-switcher fork: kind → row glyph. A toggled-off monitor always
-  // shows the slashed glyph regardless of kind; its kind icon returns when
-  // re-enabled. Glyphs: monitor / laptop / television / panorama (ultrawide).
-  function rowGlyphFor(display, meta) {
-    if (display && display.enabled === false) return "󰶐" // monitor-off
-    var kind = meta && meta.kind
-    if (kind === "laptop") return "󰌢"
-    if (kind === "ultrawide") return "󱤨"
-    if (kind === "tv") return "󰔂"
-    return "󰍹"
   }
   // === end monitor-switcher fork ===========================================
 
@@ -547,16 +612,42 @@ Panel {
 
   Process {
     id: actionProc
-    stdout: StdioCollector { waitForEnd: true }
+    stdout: StdioCollector { id: actionOutput; waitForEnd: true }
     onRunningChanged: if (!running) root.refresh()
     // monitor-switcher fork: reopen the popup after a successful toggle
     // (the backend's reload closed the surface). Failed toggles (e.g. the
     // last-display guard) never closed anything, so nothing reopens.
     onExited: function(exitCode) {
+      if (exitCode !== 0) root.actionError = String(actionOutput.text || "Display change failed").trim()
+      root.scalePreviewIndex = -1
+      root.scalePreviewOutput = ""
       if (root.reopenAfterAction) {
         root.reopenAfterAction = false
         if (exitCode === 0) reopenTimer.restart()
       }
+    }
+  }
+
+  // monitor-switcher fork: the backend watchdog outlives this popup and the shell.
+  Process {
+    id: refreshProc
+    stdout: StdioCollector { id: refreshOutput; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) root.actionError = String(refreshOutput.text || "Refresh change failed").trim()
+      root.refreshPreviewIndex = -1
+      root.refreshPreviewOutput = ""
+      root.refresh()
+      if (exitCode === 0 && !root.opened) reopenTimer.restart()
+    }
+  }
+
+  Timer {
+    interval: 1000
+    running: root.refreshPending !== null
+    repeat: true
+    onTriggered: {
+      root.refreshClock = Date.now() / 1000
+      if (!switcherProc.running) switcherProc.running = true
     }
   }
 
@@ -600,14 +691,6 @@ Panel {
     text: root.displays.length > 1 ? "󰍺" : "󰍹"
     tooltipText: "Monitor Switcher" // monitor-switcher fork
     onPressed: function(b) { root.toggle() }
-    onWheelMoved: function(delta) {
-      if (!root.brightnessAvailable) return
-      var wheel = Util.wheelSteps(root.wheelAccumulator, delta)
-      root.wheelAccumulator = wheel.remainder
-      if (wheel.steps === 0) return
-      root.setBrightness(root.brightnessPercent + wheel.steps * 5)
-      root.showBrightnessOsd(root.brightnessPercent)
-    }
   }
 
   KeyboardPanel {
@@ -617,8 +700,8 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(560))
+    contentWidth: panel.fittedContentWidth(Style.space(420)) // monitor-switcher fork: gallery breathing room
+    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(760))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -629,7 +712,9 @@ Panel {
         else if (dx !== 0) {
           if (root.focusSection === "brightness") root.adjustBrightness(dx * 5)
           else if (root.focusSection === "textsize") root.adjustTextSize(dx)
-          else if (root.focusSection === "scale") root.moveCursorH(dx)
+          else if (root.focusSection === "refresh") root.previewRefresh(Math.max(0, Math.min(root.refreshModes.length - 1, root.refreshIndex + dx)))
+          else if (root.focusSection === "scale") root.previewScale(Math.max(0, Math.min(root.scaleValues.length - 1, root.scaleIndex + dx)))
+          else if (root.focusSection === "monitors" || root.focusSection === "confirmation") root.moveCursorH(dx)
         }
       }
       onActivateRequested: if (root.cursorActive) root.activateCursor()
@@ -653,57 +738,281 @@ Panel {
           width: scrollArea.availableWidth
           spacing: Style.space(14)
 
-          // ---------- Hero: display icon · title/status ----------
+          // ---------- monitor-switcher fork: display gallery / live readout ----------
           Item {
             width: parent.width
-            implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight)
+            implicitHeight: heroTitle.implicitHeight
 
             Text {
-              id: heroIcon
-              text: root.displays.length > 1 ? "󰍺" : "󰍹"
+              id: heroTitle
+              text: "Monitor Switcher"
               color: root.bar.foreground
               font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.display
+              font.pixelSize: Style.font.title
+              font.bold: true
               anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
+              anchors.right: desktopStatus.left
+              anchors.rightMargin: Style.space(10)
+              elide: Text.ElideRight
             }
 
-            Column {
-              id: heroLabels
-              anchors.left: heroIcon.right
-              anchors.leftMargin: Style.space(14)
+            Text {
+              id: desktopStatus
+              text: root.enabledDisplayCount + " ACTIVE"
+              color: Util.alpha(root.bar.foreground, 0.55)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              font.letterSpacing: 1
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(2)
+            }
+          }
 
-              Text {
-                text: "Monitor Switcher" // monitor-switcher fork
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
-                elide: Text.ElideRight
-                width: parent.width
-              }
+          Column {
+            id: confirmationRow
+            width: parent.width
+            visible: root.refreshPending !== null
+            spacing: Style.space(8)
 
-              Text {
-                id: heroLabel
-                text: {
-                  if (root.brightnessAvailable) {
-                    return root.brightnessName(brightnessSlider.dragging ? brightnessSlider.liveValue : root.brightnessPercent).toUpperCase()
+            Text {
+              width: parent.width
+              text: root.refreshPending && root.refreshPending.reverting ? "Restoring the previous display mode..."
+                : root.refreshPending ? "Keep this refresh rate on " + ((root.switcherMeta[root.refreshPending.output] || {}).alias || root.refreshPending.output) + "?" : ""
+              textFormat: Text.PlainText
+              wrapMode: Text.WordWrap
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Repeater {
+                model: ["Revert", "Keep"]
+                Button {
+                  required property string modelData
+                  required property int index
+                  width: (confirmationRow.width - Style.space(8)) / 2
+                  text: modelData === "Revert" ? "Revert (" + root.refreshSeconds + "s)" : "Keep"
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  fontSize: Style.font.body
+                  bordered: true
+                  active: index === 1
+                  enabled: !refreshProc.running && !(index === 1 && root.refreshPending && root.refreshPending.reverting)
+                  hasCursor: root.cursorActive && root.focusSection === "confirmation" && root.selectedIndex === index
+                  onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(confirmationRow)
+                  onClicked: if (root.refreshPending) root.runRefreshAction(index === 1 ? "confirm" : "revert", root.refreshPending.token, "")
+                  onHovered: function(hovered) {
+                    if (!hovered || root.reflowingText) return
+                    root.focusSection = "confirmation"
+                    root.selectedIndex = index
+                    root.cursorActive = true
                   }
-                  return "FIXED BRIGHTNESS"
                 }
-                color: Qt.darker(root.bar.foreground, 1.4)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.2
-                elide: Text.ElideRight
-                width: parent.width
+              }
+            }
+
+            Rectangle {
+              width: parent.width
+              height: Style.space(2)
+              color: Util.alpha(Color.accent, 0.15)
+              Rectangle {
+                width: parent.width * Math.min(1, root.refreshSeconds / 20)
+                height: parent.height
+                color: Color.accent
+                Behavior on width { NumberAnimation { duration: 180 } }
               }
             }
           }
+
+          Text {
+            visible: root.actionError !== ""
+            width: parent.width
+            text: root.actionError
+            textFormat: Text.PlainText
+            wrapMode: Text.WrapAnywhere
+            color: Color.urgent
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          DisplayGallery {
+            width: parent.width
+            monitors: root.galleryMonitors
+            focusedMonitor: root.focusedMonitor
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            busy: root.layoutBusy
+            enabledCount: root.enabledDisplayCount
+            cursorIndex: root.cursorActive && root.focusSection === "monitors" ? root.selectedIndex : -1
+            onToggleRequested: function(output, currentlyEnabled) { root.toggleDisplay(output, currentlyEnabled) }
+            onCursorRequested: function(index) {
+              if (root.reflowingText) return
+              root.focusSection = "monitors"
+              root.selectedIndex = index
+              root.cursorActive = true
+            }
+            onCursorItemChanged: function(item) { root.ensureCursorVisible(item) }
+          }
+
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(liveRate.implicitHeight, focusLabels.implicitHeight)
+
+            Column {
+              id: focusLabels
+              anchors.left: parent.left
+              anchors.right: liveRate.left
+              anchors.rightMargin: Style.space(16)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(4)
+
+              Text {
+                width: parent.width
+                text: root.focusedMeta.alias || root.focusedMonitor || "Your display"
+                textFormat: Text.PlainText
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+                elide: Text.ElideRight
+              }
+              Text {
+                width: parent.width
+                text: root.focusedMeta.width > 0 ? root.focusedMeta.width + " x " + root.focusedMeta.height + " / " + root.focusedMeta.scale + "x" : "Reading display..."
+                color: Util.alpha(root.bar.foreground, 0.6)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+              }
+            }
+
+            Column {
+              id: liveRate
+              anchors.right: parent.right
+              spacing: Style.space(2)
+
+              Text {
+                text: Model.formatRefreshRate(root.focusedMeta.refreshRate) + " Hz"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.space(34)
+                font.weight: Font.DemiBold
+                font.letterSpacing: -1
+              }
+              Text {
+                anchors.right: parent.right
+                text: root.refreshPending && root.refreshPending.reverting ? "REVERTING" : refreshProc.running ? "APPLYING" : "LIVE REFRESH"
+                color: Util.alpha(root.bar.foreground, 0.5)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 1.2
+              }
+            }
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.space(5)
+            visible: root.refreshModes.length > 0
+
+            Item {
+              width: parent.width
+              implicitHeight: refreshHeader.implicitHeight
+
+              PanelSectionHeader {
+                id: refreshHeader
+                text: "REFRESH RATE"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+              }
+              Text {
+                anchors.right: parent.right
+                text: root.refreshPreviewIndex >= 0 ? Model.formatRefreshRate(root.refreshPreviewRate) + " Hz preview" : ""
+                color: Color.accent
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            CursorSurface {
+              id: refreshRow
+              width: parent.width
+              height: refreshSlider.implicitHeight + Style.spacing.controlGap
+              hasCursor: root.cursorActive && root.focusSection === "refresh"
+              onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(refreshRow)
+              foreground: root.bar.foreground
+              outline: true
+              opacity: root.layoutBusy || root.refreshModes.length < 2 ? 0.45 : 1
+
+              DragSlider {
+                id: refreshSlider
+                onScrollRequested: function(pixels) { root.scrollPanel(pixels) }
+                anchors.fill: parent
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(8)
+                bar: root.bar
+                enabled: !root.layoutBusy && root.refreshModes.length > 1
+                minimum: 0
+                maximum: Math.max(1, root.refreshModes.length - 1)
+                integer: true
+                step: 1
+                tickCount: root.refreshModes.length
+                fillColor: Color.accent
+                knobColor: Color.accent
+                value: root.refreshIndex
+                onMoved: function(v) { root.previewRefresh(Math.round(v)) }
+                onReleased: function(v) { root.commitRefresh() }
+              }
+              HoverHandler {
+                onHoveredChanged: if (hovered && !root.reflowingText && !root.refreshPending) {
+                  root.focusSection = "refresh"
+                  root.selectedIndex = -1
+                  root.cursorActive = true
+                }
+              }
+            }
+
+            Item {
+              width: parent.width
+              implicitHeight: Style.font.caption * 1.5
+              Repeater {
+                model: root.refreshModes
+                Text {
+                  required property var modelData
+                  required property int index
+                  readonly property real labelSpace: Math.max(1, (parent.width - Style.space(16)) / Math.max(1, root.refreshModes.length - 1))
+                  width: Math.min(implicitWidth, labelSpace)
+                  x: Math.max(Style.space(4), Math.min(parent.width - width - Style.space(4),
+                    Style.space(8) + index * labelSpace - width / 2))
+                  text: Model.formatRefreshRate(modelData.rate)
+                  // Dense EDIDs still retain every stop; label endpoints and selection only.
+                  visible: root.refreshModes.length <= 6 || index === 0 || index === root.refreshModes.length - 1 || index === root.refreshIndex
+                  elide: Text.ElideRight
+                  color: index === root.liveRefreshIndex ? Color.accent : Util.alpha(root.bar.foreground, 0.55)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: index === root.liveRefreshIndex
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              text: root.refreshModes.length === 1 ? "Only one rate is advertised at this resolution."
+                : root.refreshPreviewIndex >= 0 && !refreshSlider.dragging ? "Press Enter to try this rate."
+                : "Supported at this resolution. Release to try; Keep to save."
+              color: Util.alpha(root.bar.foreground, 0.5)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+          }
+          // ---------- end monitor-switcher fork ----------
 
           // ---------- Brightness ----------
           PanelSeparator {
@@ -759,12 +1068,13 @@ Panel {
               foreground: root.bar.foreground
               outline: true
 
-              PanelSlider {
+              DragSlider {
                 id: brightnessSlider
+                onScrollRequested: function(pixels) { root.scrollPanel(pixels) }
                 bar: root.bar
                 anchors.fill: parent
-                anchors.leftMargin: Style.space(6)
-                anchors.rightMargin: Style.space(6)
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(8)
                 minimum: 1
                 maximum: 100
                 step: 1
@@ -833,12 +1143,13 @@ Panel {
               foreground: root.bar.foreground
               outline: true
 
-              PanelSlider {
+              DragSlider {
                 id: textSizeSlider
+                onScrollRequested: function(pixels) { root.scrollPanel(pixels) }
                 bar: root.bar
                 anchors.fill: parent
-                anchors.leftMargin: Style.space(6)
-                anchors.rightMargin: Style.space(6)
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(8)
                 minimum: 0
                 maximum: root.textSizeStops.length - 1
                 step: 1
@@ -880,13 +1191,11 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
               }
 
-              // Name the monitor SCALE targets, since it only applies to the
-              // focused one.
+              // Scale previews and the live value use the same percentage notation.
               Text {
                 id: scaleMonitor
-                text: root.focusedMonitor
-                // Only worth naming when more than one display is in play.
-                visible: root.focusedMonitor !== "" && root.enabledDisplayCount > 1
+                text: Math.round(Number(root.scalePreviewIndex >= 0 ? root.effectiveScale(root.scalePreviewValue) : root.focusedMeta.scale || 1) * 1000) / 10 + "%"
+                visible: root.focusedMonitor !== ""
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
@@ -897,59 +1206,70 @@ Panel {
               }
             }
 
-            Grid {
+            CursorSurface {
               id: scaleRow
               width: parent.width
-              columns: root.scaleValues.length
-              spacing: Style.spacing.xs
+              height: scaleSlider.implicitHeight + Style.spacing.controlGap
+              hasCursor: root.cursorActive && root.focusSection === "scale"
+              onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(scaleRow)
+              foreground: root.bar.foreground
+              outline: true
+              opacity: root.layoutBusy ? 0.45 : 1
 
-              readonly property real cellWidth: root.scaleValues.length > 0
-                ? (width - spacing * (columns - 1)) / columns
-                : 0
-
-              Repeater {
-                model: root.scaleValues
-
-                ScalePill {
-                  required property string modelData
-                  required property int index
-
-                  scaleValue: modelData
-                  scaleIndex: index
-                  width: scaleRow.cellWidth
+              DragSlider {
+                id: scaleSlider
+                anchors.fill: parent
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(8)
+                bar: root.bar
+                enabled: !root.layoutBusy && root.focusedMeta.enabled === true
+                minimum: 0
+                maximum: Math.max(1, root.scaleValues.length - 1)
+                step: 1
+                integer: true
+                tickCount: root.scaleValues.length
+                value: root.scaleIndex
+                onMoved: function(v) { root.previewScale(Math.round(v)) }
+                onReleased: function(v) { root.commitScale() }
+                onScrollRequested: function(pixels) { root.scrollPanel(pixels) }
+              }
+              HoverHandler {
+                onHoveredChanged: if (hovered && !root.reflowingText) {
+                  root.focusSection = "scale"
+                  root.selectedIndex = -1
+                  root.cursorActive = true
                 }
               }
             }
-          }
 
-          // ---------- Monitors ----------
-          PanelSeparator {
-            visible: root.displays.length > 1
-            foreground: root.bar.foreground
-          }
-
-          Column {
-            width: parent.width
-            spacing: Style.space(10)
-            visible: root.displays.length > 1
-
-            PanelSectionHeader {
-              text: "DISPLAYS"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
+            Item {
+              width: parent.width
+              implicitHeight: Style.font.caption * 1.5
+              Repeater {
+                model: root.scaleValues
+                Text {
+                  required property string modelData
+                  required property int index
+                  readonly property real labelSpace: Math.max(1, (parent.width - Style.space(16)) / Math.max(1, root.scaleValues.length - 1))
+                  width: Math.min(implicitWidth, labelSpace)
+                  x: Math.max(Style.space(4), Math.min(parent.width - width - Style.space(4), Style.space(8) + index * labelSpace - width / 2))
+                  text: Math.round(Number(root.effectiveScale(modelData)) * 1000) / 10 + "%"
+                  elide: Text.ElideRight
+                  color: index === root.activeScaleIndex() ? Color.accent : Util.alpha(root.bar.foreground, 0.55)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: index === root.activeScaleIndex()
+                }
+              }
             }
 
-            Repeater {
-              model: root.sortedDisplays() // monitor-switcher fork: pack-order rows
-
-              MonitorRow {
-                required property var modelData
-                required property int index
-
-                width: panelColumn.width
-                display: modelData
-                rowIndex: index
-              }
+            Text {
+              visible: root.scalePreviewIndex >= 0 && !scaleSlider.dragging
+              width: parent.width
+              text: "Press Enter to apply this scale."
+              color: Util.alpha(root.bar.foreground, 0.5)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
             }
           }
 
@@ -979,122 +1299,4 @@ Panel {
     }
   }
 
-  component ScalePill: Button {
-    id: pill
-    required property string scaleValue
-    required property int scaleIndex
-
-    text: root.effectiveScale(scaleValue) + "x"
-    fontSize: Style.font.caption
-    foreground: root.bar.foreground
-    fontFamily: root.bar.fontFamily
-    horizontalPadding: Style.spacing.sm
-    verticalPadding: Style.spacing.controlPaddingY
-    bordered: true
-
-    active: root.activeScaleIndex() === scaleIndex
-    hasCursor: root.cursorActive && root.focusSection === "scale" && root.selectedIndex === scaleIndex
-
-    onClicked: root.setScale(scaleValue)
-    onHovered: function(isHovered) {
-      if (!isHovered || root.reflowingText) return
-      root.cursorActive = true
-      root.focusSection = "scale"
-      root.selectedIndex = pill.scaleIndex
-    }
-  }
-
-  component MonitorRow: CursorSurface {
-    id: monitorRow
-    required property var display
-    required property int rowIndex
-
-    // monitor-switcher fork: backend metadata (alias, configured scale)
-    readonly property var meta: display ? (root.switcherMeta[display.name] || null) : null
-
-    readonly property bool isFocused: display && display.focused
-    readonly property bool canToggle: display && (!display.enabled || root.enabledDisplayCount > 1)
-
-    hasCursor: root.cursorActive && root.focusSection === "monitors" && root.selectedIndex === rowIndex
-    onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(monitorRow)
-    current: isFocused
-    foreground: root.bar.foreground
-    fill: Style.hoverFillFor(root.bar.foreground, Color.accent)
-    currentFill: Style.selectedFillFor(root.bar.foreground, Color.accent)
-    implicitHeight: monitorInner.implicitHeight + Style.spacing.xl
-    opacity: canToggle ? 1.0 : 0.45
-
-    Row {
-      id: monitorInner
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(6)
-      anchors.rightMargin: Style.space(6)
-      spacing: Style.space(8)
-
-      // === monitor-switcher fork: alias label + resolution caption =========
-      Text {
-        id: rowGlyph
-        text: root.rowGlyphFor(monitorRow.display, monitorRow.meta)
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.title
-        width: Style.space(22)
-        horizontalAlignment: Text.AlignHCenter
-        anchors.verticalCenter: parent.verticalCenter
-      }
-
-      Text {
-        id: rowLabel
-        // monitor-switcher fork: number rows by config order so the row
-        // matches `monitor-switcher toggle N` / keybinds 1..N.
-        text: (monitorRow.meta && monitorRow.meta.num ? String(monitorRow.meta.num) + " · " : "")
-              + ((monitorRow.meta && monitorRow.meta.alias) || monitorRow.display.name)
-              + (monitorRow.display.focused ? " · focused" : "")
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.body
-        elide: Text.ElideRight
-        width: parent.width - rowGlyph.width - rowCaption.implicitWidth - rowCheck.width
-               - Style.space(6) * 2 - parent.spacing * 3
-        anchors.verticalCenter: parent.verticalCenter
-      }
-
-      Text {
-        id: rowCaption
-        text: (monitorRow.meta && monitorRow.meta.inches > 0 ? monitorRow.meta.inches + "\" · " : "")
-              + monitorRow.display.width + "×" + monitorRow.display.height
-              + (monitorRow.meta && monitorRow.meta.scale ? " @" + monitorRow.meta.scale + "x" : "")
-        color: Qt.darker(root.bar.foreground, 1.4)
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.caption
-        anchors.verticalCenter: parent.verticalCenter
-      }
-
-      Text {
-        id: rowCheck
-        text: monitorRow.display.enabled ? "󰄬" : ""
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.subtitle
-        width: Style.space(14)
-        horizontalAlignment: Text.AlignRight
-        anchors.verticalCenter: parent.verticalCenter
-      }
-      // === end monitor-switcher fork =======================================
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: monitorRow.canToggle ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onContainsMouseChanged: if (containsMouse && !root.reflowingText) {
-        root.cursorActive = true
-        root.focusSection = "monitors"
-        root.selectedIndex = monitorRow.rowIndex
-      }
-      onClicked: if (monitorRow.canToggle) root.toggleDisplay(monitorRow.display.name, monitorRow.display.enabled)
-    }
-  }
 }

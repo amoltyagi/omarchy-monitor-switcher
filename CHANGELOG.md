@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.6.0 - 2026-09-08
+
+- Integrated On/Off buttons and number/size/resolution/scale metadata into
+  the gallery, removing the duplicate bottom display list. Keyboard shortcuts
+  and the existing footer are preserved. Scale uses the same stepped slider
+  design as refresh, including custom current settings.
+- Wheel gestures now scroll the panel without changing settings; removed
+  scroll-to-change brightness from the bar icon.
+- Theme-aware monitor gallery with proportioned displays, dimmed off screens,
+  focused-display highlighting, and a prominent live refresh readout.
+- Supported-mode refresh step bar with drag preview, keyboard control and
+  persistent changes. A 20-second Keep/Revert trial is protected by an
+  independent watchdog, verified live modes and full config/layout rollback.
+- Serialized backend changes, bounded reloads, retryable rollback and recovery
+  of expired trials after interruption. Added isolated backend and model tests.
+- Ordinary display actions now restore the previous generated rules as well
+  as config/state when reload validation fails.
+- Updated documentation and clean screenshots showing the MSI at 4K/240 Hz.
+
 ## 2.5.3 — 2026-08-24
 
 - **Marketplace review round 2** (#1918): `safe_read()` no longer

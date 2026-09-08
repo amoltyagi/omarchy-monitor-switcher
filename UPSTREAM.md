@@ -1,7 +1,8 @@
 # Upstream fork tracking
 
-`Panel.qml` and `Model.js` are vendored copies of Omarchy's built-in Display
-widget (`omarchy.monitor`) with a small, fenced patch set applied.
+`Panel.qml` and `Model.js` derive from Omarchy's built-in Display widget
+(`omarchy.monitor`). The local gallery, refresh trials and wheel-safe controls
+extend that original fork; they are not supplied by the upstream widget.
 
 ## Provenance
 
@@ -12,10 +13,9 @@ widget (`omarchy.monitor`) with a small, fenced patch set applied.
 | Forked from | Omarchy **4.0.0** (`pacman -Q omarchy` → `4.0.0-1`) |
 | License | MIT, (c) David Heinemeier Hansson — see `LICENSE.upstream` |
 
-## The patch set (Panel.qml only — Model.js is byte-identical)
+## The patch set
 
-Every change is marked with a `monitor-switcher fork` comment. Audit the
-delta any time with:
+Local feature blocks carry `monitor-switcher fork` comments. Locate them with:
 
 ```bash
 grep -n "monitor-switcher fork" Panel.qml
@@ -38,27 +38,22 @@ grep -n "monitor-switcher fork" Panel.qml
    Switcher"`.
 4. **Panel title** — hero reads "Monitor Switcher" instead of "Display", so
    screenshots in issue reports are attributable to the right project.
-5. **Named, numbered rows** — a second `Process` polls
+5. **Named, numbered gallery** — a second `Process` polls
    `bin/monitor-switcher state --json` into a `switcherMeta` map (fired from
-   `refresh()`); DISPLAYS rows render the config-order number, the alias,
-   and a `WxH @scalex` caption instead of the bare output name. The number
-   matches the backend's numeric ids (`monitor-switcher toggle N`), and rows
-   are **sorted by that number** (`sortedDisplays()`; the Repeater model and
-   `activateCursor` index the same array, so keyboard activation tracks) —
-   the list reads left-to-right like the physical layout. Ordering aside, all
-   state logic still runs on `root.displays`.
+   `refresh()`). `galleryMonitors` sorts connected displays by config-order
+   number; illustrations show that number, alias and configured geometry.
+   `activateCursor` indexes the same array and calls the persistent backend.
+   Numbers match `monitor-switcher toggle N` and the existing keybindings.
 6. **Brightness target label** — the BRIGHTNESS section header names the
    focused display it controls (`BRIGHTNESS · ACER`), mirroring upstream's
    SCALE header pattern. Upstream's slider only ever targets the focused
    monitor, and a disabled monitor can't be focused — this label makes that
    visible instead of looking like a missing feature.
-7. **Physical size + class icons + hotplug** — the backend's `state --json`
+7. **Physical size and hotplug** — the backend's `state --json`
    derives per-monitor `inches` (EDID mm via `hyprctl monitors all`) and
-   `kind` (laptop / ultrawide ≥ 2.3 aspect / tv ≥ 38" / monitor). Rows show
-   `size · resolution @scale` and a per-kind glyph (`rowGlyphFor`); disabled
-   rows show the slashed monitor-off glyph. A `Quickshell.screens`-count
-   watcher refreshes state on hotplug/external toggles. Nothing is hardcoded
-   per monitor — all metadata comes from the EDID and live compositor state.
+   `kind` (laptop / ultrawide ≥ 2.3 aspect / tv ≥ 38" / monitor). The gallery
+   shows size, resolution, scale and live Hz, with dimmed off screens. A
+   `Quickshell.screens`-count watcher refreshes state on hotplug/external toggles.
 8. **Reopen popup after toggles** — the backend persists via
    `hyprctl reload`, and a toggle that changes the enabled-screen count
    remaps bars, destroying the popup surface (a plain reload does not —
@@ -68,7 +63,7 @@ grep -n "monitor-switcher fork" Panel.qml
    the disabled monitor owned this bar, nothing reopens — correct,
    since that surface is gone.
 9. **Keyboard hint footer** — a `PanelSeparator` + one centered caption
-   under the DISPLAYS section suggesting the adoptable keybind convention
+   at the bottom of the panel suggesting the adoptable keybind convention
    (`Keyboard shortcut: SUPER+SHIFT+CTRL+1…N`, N tracks
    `root.displays.length`; only shown with 2+ displays). Pure
    discoverability; no logic.
@@ -86,6 +81,20 @@ grep -n "monitor-switcher fork" Panel.qml
     The backend rounds to a Hyprland-clean scale, persists it in
     `config.json`, and re-applies through the overlap validator; packing
     reflows automatically.
+12. **Display gallery and refresh controls** - `DisplayGallery.qml` renders
+    theme-aware monitor silhouettes using configured dimensions and rotation,
+    including dimmed disabled monitors. `Model.js` adds geometry and precise
+    refresh matching/formatting helpers. The panel displays live Hz and an
+    indexed, advertised-mode slider, keyboard preview/commit, pending countdown,
+    Keep/Revert controls, and backend errors. Layout actions are serialized;
+    bounded command pipelines preserve failure status with `pipefail`.
+    The backend owns persistence, live verification and independent rollback.
+13. **Integrated gallery controls and wheel-safe sliders** - numbered gallery
+    illustrations, size/resolution/scale metadata and On/Off buttons replace
+    the duplicate bottom display list. Existing keyboard shortcuts and the
+    exact shortcut footer remain. Scale is an indexed slider including the
+    custom current value. `DragSlider.qml` intercepts wheel input for panel
+    scrolling; the bar no longer changes brightness on wheel gestures.
 
 ## Re-sync procedure (after each Omarchy update)
 
@@ -94,15 +103,15 @@ grep -n "monitor-switcher fork" Panel.qml
    `diff /usr/share/omarchy/shell/plugins/panels/monitor/Panel.qml Panel.qml`
    ignoring the fenced blocks.
 2. If upstream changed: copy the fresh `Panel.qml` / `Model.js` over ours,
-   re-apply the eleven patches above (all within `monitor-switcher fork`
+   re-apply the patches above (all within `monitor-switcher fork`
    fences), and update the version in the table.
 3. Run the smoke matrix:
-   - panel opens; brightness slider + scroll-wheel brightness + OSD work
+   - panel opens; brightness dragging works, wheel gestures never change settings
    - BRIGHTNESS header names the focused display when >1 is managed
-   - DISPLAYS rows show aliases, `size · resolution @scale` captions, and
-     per-class glyphs (slashed monitor when off); unplug/replug updates rows
-   - text size slider snaps through its stops; scale pills apply
-   - toggle a monitor off → row unchecks; survives `hyprctl reload` + 10 s
+   - gallery shows number, alias, size, resolution, scale and On/Off buttons;
+     unplug/replug updates the gallery; original shortcut footer remains
+   - text size and scale sliders snap through their stops; release applies
+   - toggle a monitor off → gallery button reads Off; survives `hyprctl reload` + 10 s
      (the `omarchy-hyprland-monitor-watch` reaction window)
    - toggle it back on → returns to its previous position/scale
    - last enabled display refuses to turn off

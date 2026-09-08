@@ -2,17 +2,17 @@
   "schemaVersion": 1,
   "id": "case.monitor-switcher",
   "name": "Monitor Switcher",
-  "version": "2.5.3",
+  "version": "2.6.0",
   "author": "amoltyagi",
   "license": "MIT",
-  "description": "Drop-in replacement for Omarchy's Display widget: monitor toggles that persist across reloads and reboots, overlap-validated layouts, aliases and a CLI for keybinds",
+  "description": "A keyboard-friendly display control center for Omarchy: monitor gallery with persistent On/Off controls, live refresh rates, 20-second Keep/Revert trials and wheel-safe brightness, text-size and scale sliders",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "Panel.qml"
   },
   "barWidget": {
     "displayName": "Monitor Switcher",
-    "description": "Brightness, text size, and scale — plus persistent, overlap-safe monitor toggles and CLI arrangement",
+    "description": "Numbered monitor gallery, direct On/Off buttons, live Hz and stepped controls, with persistent layouts and keyboard shortcuts",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"

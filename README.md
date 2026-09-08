@@ -1,304 +1,268 @@
 # Monitor Switcher
 
-An [Omarchy](https://omarchy.org) shell plugin that **replaces the built-in
-Display widget** with an identical twin — brightness, text size, scale
-presets, display list — except its monitor on/off toggles are **persistent,
-layout-aware, and overlap-proof**.
+**Your displays, in one place. Settings that stay put.**
 
-Built for **desktops with two or more external monitors**: switch panels
-off and on from the bar, the keyboard, or a keybind — and have it stay that
-way.
+A keyboard-friendly display control center for [Omarchy](https://omarchy.org).
+Turn monitors on and off directly from a visual gallery, see their actual
+refresh rates, and adjust brightness, text size and scale without leaving the
+panel. Monitor settings persist across Hyprland reloads and reboots.
 
-![preview](preview.png)
+<img src="preview.png" alt="Monitor Switcher 2.6.0: MSI at 3840x2160 and 240 Hz, gallery On/Off controls, stepped sliders and keyboard shortcut footer" width="440">
 
-This is an **unofficial fork** of Omarchy's `omarchy.monitor` widget
-(vendored at Omarchy 4.0.0, MIT — see `UPSTREAM.md`). It is not affiliated
-with or supported by the Omarchy project. **Please report issues to this
-repository, not to Omarchy.**
+*Actual panel capture: MSI 4K OLED at 240 Hz, LG ultrawide on, Acer off.
+Colors and typography follow the active Omarchy theme.*
 
-## Why this exists
+This is an **unofficial fork** of Omarchy's `omarchy.monitor` widget, originally
+vendored from Omarchy 4.0.0 under MIT. It is not affiliated with or supported by
+Omarchy. Please report plugin issues to
+[this repository](https://github.com/amoltyagi/omarchy-monitor-switcher/issues).
+See [UPSTREAM.md](UPSTREAM.md) for attribution and maintenance notes.
 
-Omarchy already has a great display-toggle story — **if you're on a laptop**.
-The internal display gets a persistent toggle (`SUPER+CTRL+Delete`),
-mirroring, lid-switch automation, and a recovery service, all backed by a
-config-file mechanism that survives reloads and reboots.
+## Features
 
-External monitors get none of that. The built-in Display widget can toggle a
-monitor, but only at runtime: the disable lives in no config file, so the
-next `hyprctl reload` — a theme switch, a system refresh, the watcher's
-recovery loop — silently turns it back on. Re-enable it and your position
-and scale are gone (`auto` placement). The only persistent option is
-hand-editing `monitors.lua`.
+- **Monitor gallery:** proportioned screen illustrations, shortcut numbers,
+  aliases, physical sizes, resolutions, scale and live Hz. On/Off buttons sit
+  directly beneath each screen; there is no duplicate list to scroll to.
+- **Persistent switching:** off states and per-monitor settings survive config
+  reloads and reboots. The last active display cannot be switched off.
+- **Supported refresh steps:** choose only rates advertised at the configured
+  resolution, including fractional rates. A large readout shows the running mode.
+- **20-second Keep/Revert trials:** refresh changes are verified against the
+  compositor. An independent watchdog restores the previous configuration and
+  generated layout if you do not confirm, even if the panel or shell closes.
+- **Consistent sliders:** brightness, stepped text size and stepped scale share
+  one visual language. Scale retains custom current values such as 187.5%.
+- **No accidental wheel edits:** click, drag or use the keyboard to change a
+  setting. Wheel gestures scroll the panel; scrolling the bar icon does nothing.
+- **Keyboard-first controls:** arrow keys or `hjkl`, Enter/Space, and optional
+  `SUPER+SHIFT+CTRL+1...N` monitor shortcuts. The shortcut hint stays in the footer.
+- **Layout memory:** enabled screens pack in config order or use pinned
+  positions. Overlapping layouts are rejected before they reach Hyprland.
+- **One backend:** gallery actions, CLI commands and keybindings share the same
+  persistent state and validation.
 
-Monitor Switcher closes that gap:
+<details>
+<summary>Gallery and 240 Hz refresh control, close up</summary>
 
-- **Persistent on/off for every output** — the same toggles-dir mechanism
-  Omarchy reserves for laptop panels, extended to all your monitors
-- **Layout memory** — position, scale, mode, and transform per monitor;
-  remaining screens re-pack left-to-right in a fixed order
-- **Scriptable** — a CLI with aliases (`toggle MSI`) that survive output
-  renumbering, so keybinds stay stable
-- **Zero feature loss** — the built-in widget's full feature set
-  (brightness, text size, scale) with real toggles on top
+<img src="preview-detail.png" alt="Numbered MSI, LG and Acer gallery with direct On/Off buttons and 60, 120, 180 and 240 Hz refresh steps" width="660">
 
-And switching deserves a keyboard home. Omarchy ships no keybind to power an
-external display on or off, so display rows are **numbered 1…N
-left-to-right** and the CLI answers `toggle 1`…`toggle N` — bind
-`SUPER+SHIFT+CTRL+1…N` (a combo Omarchy leaves unclaimed) and every panel on
-your desk is one keystroke away, listed in the `SUPER+K` keybindings sheet
-like a first-party shortcut.
-
-### Who it's for
-
-- **Desktop users with two or more external monitors** — the audience the
-  built-in tooling least serves
-- **OLED owners** who switch panels off when idle (burn-in is real)
-- **Streamers and anyone flipping between focus and full-battlestation
-  layouts**
-- **Anyone with a flaky-EDID monitor** whose runtime toggles keep getting
-  reverted by the watcher daemon
-- **Docked-laptop users** who want the same persistence for every screen,
-  not just the internal one
-
-Single monitor you never switch off? The built-in widget has you covered —
-this plugin is for the rest of us.
-
-### How this differs from layout editors
-
-[Monitor Studio](https://omarchyplugins.com/plugin.html?id=io.github.vuhungthang.monitor-studio),
-[hyprmoncfg](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg),
-[Screens](https://omarchyplugins.com/plugin.html?id=im0001gt.screens) and
-friends are **arrangement tools**: drag rectangles, pick modes, save
-profiles. Monitor Switcher is a **switcher**: off-states that persist across
-reloads and reboots, keybind-stable aliases, and layouts that are validated
-for overlaps *before* they reach the compositor — Hyprland's "Monitor X
-overlaps with other monitor(s)" error can never come from here. One caveat:
-tools that each write `hl.monitor` rules fight over the same outputs — the
-last reload wins. Use Monitor Switcher **or** a layout editor, not both.
-
-## What you get
-
-Everything the built-in Display widget already does, unchanged:
-
-- brightness slider (plus scroll-on-the-bar-icon, with OSD) — it controls the
-  **focused** monitor, which the header names (`BRIGHTNESS · ACER`)
-- text size slider, scale presets for the focused monitor
-- display on/off rows showing each monitor's **alias, physical size, and
-  resolution@scale** (`LG  38" · 3840×1600 @1.25x`), with per-class icons
-  (laptop / ultrawide / TV / monitor / slashed = off) read live from EDID —
-  last-display lock, laptop internal/mirror handling
-- instant reaction to **monitor hotplug** and external keybind toggles
-- **keyboard control, mouse optional**: `↑`/`↓` to a display row,
-  `⏎`/`space` switches that monitor on or off; `←`/`→` adjust sliders and
-  walk the scale presets, `esc` close, `tab` hop to the next panel — and
-  the popup footer shows the adoptable `SUPER+SHIFT+CTRL+1…N` shortcut
-
-Plus what the built-in widget can't do:
-
-- **persistent off-states** — a monitor you switch off stays off across
-  `hyprctl reload`, reboots, and the `omarchy-hyprland-monitor-watch` daemon
-- **overlap-proof layouts** — every layout is validated before applying; a
-  colliding arrangement is refused with a clear message and your current
-  layout is kept, instead of Hyprland auto-placing on top of your rules
-- **layout memory** — enabled monitors pack left-to-right in a fixed order,
-  each keeping its own position, scale, mode, and transform
-- **manual arrangement from the CLI** — pin explicit positions or move
-  monitors relative to each other (`move`/`swap`/`pack`), no drag canvas
-  required
-- a **CLI and aliases** (`toggle MSI` instead of `toggle DP-3`), so
-  keybindings survive output renumbering
+</details>
 
 ## Install
 
+Requires Omarchy 4.x with its Lua-based Hyprland configuration and Quickshell.
+The backend uses Bash, jq, coreutils and util-linux tools supplied by Omarchy.
+
 ```bash
 omarchy plugin add https://github.com/amoltyagi/omarchy-monitor-switcher --enable
-```
-
-Then, to avoid two display widgets in the bar, disable the built-in one:
-
-```bash
 omarchy plugin disable omarchy.monitor
 ```
 
-This is Omarchy's official, fully reversible mechanism — it removes the
-widget from your bar layout, nothing more. Bring it back any time with
-`omarchy plugin enable omarchy.monitor`. (The plugin deliberately does **not**
-do this for you; your bar layout is yours.) If you keep both enabled, they
-coexist safely — they use separate IPC targets — but the built-in widget's
-toggles remain runtime-only, so prefer toggling from Monitor Switcher.
+The second command avoids duplicate display widgets; it only changes your bar
+layout. Restore the built-in widget with `omarchy plugin enable omarchy.monitor`.
+The two plugins have separate IPC targets, but the built-in widget's runtime-only
+changes can conflict with this plugin's persisted settings.
 
-On first run the plugin adopts your current monitor setup — no manual
-configuration needed.
+On first use, the plugin adopts connected monitors and their current scale.
+Refresh defaults to the monitor's **preferred** mode, which is not necessarily
+its highest rate. Use the refresh slider to choose a higher supported rate.
 
-## Usage
+## Use the Panel
 
-**Bar:** click the monitor glyph to open the popup. Sliders and scale pills
-behave exactly like the built-in widget. Click a display row (or move to it
-with the arrow keys and hit `⏎`) to toggle that monitor persistently.
-Scrolling the bar glyph adjusts brightness.
+Click the monitor icon in the bar to open the panel.
 
-**Terminal:**
+| Control | Behavior |
+|---|---|
+| Gallery On/Off | Persistently toggle that monitor; the last active screen is protected |
+| Refresh rate | Drag to preview, release to try, then Keep within 20 seconds |
+| Brightness | Adjust the focused monitor when brightness control is available |
+| Text size | Adjust shell/GTK text size through Omarchy's text-size command |
+| Scale | Preview a step and release to apply it to the focused monitor |
+| Wheel/touchpad scroll | Scroll the panel without changing values |
 
-```bash
-monitor-switcher state            # table of monitors (+ overlap warnings)
-monitor-switcher state --json     # machine-readable
-monitor-switcher toggle MSI       # alias, output name, or number: toggle 2
-monitor-switcher disable DP-2
-monitor-switcher enable LG
-monitor-switcher apply            # re-apply layout from config
-```
+The gallery identifies the focused screen. Refresh, brightness and scale target
+that screen. The live Hz readout describes the compositor's display mode,
+**not measured application FPS**. Refresh changes preserve resolution, scale,
+position and rotation.
 
-**Arranging** (all validated for overlaps before anything is applied — a
-colliding change is refused and reverted):
+During a refresh trial, other layout changes are blocked. **Keep** saves the
+choice; **Revert** restores the previous configuration immediately. Failed
+rollback reloads are retried. If a watchdog is interrupted, the next backend
+invocation recovers its expired trial.
 
-```bash
-monitor-switcher plan                # preview computed layout boxes
-monitor-switcher move LG 2048x0      # pin a position (logical pixels)
-monitor-switcher move LG above MSI   # or relative: left-of|right-of|above|below
-monitor-switcher swap MSI LG         # exchange places in the pack order
-monitor-switcher pack                # clear all pins, re-pack left-to-right
-```
+### Keyboard Controls
 
-Unpinned monitors pack left-to-right in config order; a pinned monitor sits
-exactly where you put it (vertical stacks, intentional gaps — anything
-Hyprland allows). Geometry is derived from each monitor's **configured**
-mode — never from a transient fallback mode it might be running during
-hotplug — and rotation (odd transforms) is accounted for.
+| Key | Action |
+|---|---|
+| Up/Down or `k`/`j` | Move through gallery buttons and control sections |
+| Left/Right or `h`/`l` | Walk buttons, adjust brightness/text size, or preview scale/refresh steps |
+| Enter/Space | Toggle the highlighted monitor, apply a preview, or activate Keep/Revert |
+| Escape | Close the panel; an unconfirmed refresh trial still reverts |
+| Tab/Shift+Tab | Move between shell panels |
 
-**Keybindings** (add to `~/.config/hypr/bindings.lua`, adjusting the path if
-your plugin id differs):
+To toggle displays without opening the panel, add bindings to
+`~/.config/hypr/bindings.lua`. Numbers follow **config order**, not connector names:
 
 ```lua
--- 1/2/3 = left/center/right in the pack order — numbers are allocated
--- automatically, need no aliases, and survive output renumbering.
 o.bind("SUPER + SHIFT + CTRL + 1", "Toggle display 1",
-  "/home/USER/.config/omarchy/plugins/case.monitor-switcher/bin/monitor-switcher toggle 1")
+  os.getenv("HOME") .. "/.config/omarchy/plugins/case.monitor-switcher/bin/monitor-switcher toggle 1")
 o.bind("SUPER + SHIFT + CTRL + 2", "Toggle display 2",
-  "/home/USER/.config/omarchy/plugins/case.monitor-switcher/bin/monitor-switcher toggle 2")
+  os.getenv("HOME") .. "/.config/omarchy/plugins/case.monitor-switcher/bin/monitor-switcher toggle 2")
 o.bind("SUPER + SHIFT + CTRL + 3", "Toggle display 3",
-  "/home/USER/.config/omarchy/plugins/case.monitor-switcher/bin/monitor-switcher toggle 3")
+  os.getenv("HOME") .. "/.config/omarchy/plugins/case.monitor-switcher/bin/monitor-switcher toggle 3")
 ```
 
-`SUPER+SHIFT+CTRL+<number>` is unclaimed by Omarchy defaults, and because
-the binds carry descriptions they show up in Omarchy's `SUPER+K`
-keybindings sheet like first-party shortcuts. Prefer names? Aliases work
-everywhere numbers do (`toggle MSI`) and likewise survive renumbering
-(DP-1 ↔ DP-3 shuffling).
+Descriptions also appear in Omarchy's `SUPER+K` keybindings sheet. Adjust the
+plugin path if you installed it under a different ID.
 
-**IPC:** the panel answers on its own target, e.g.
-`omarchy-shell case.monitor-switcher state` (brightness, focused monitor,
-scale, display list) — same methods as the built-in widget, minus the
-collision.
+## Command Line
+
+The executable lives inside the plugin; installation does not add it to `PATH`.
+Use its full path, or enable the short command for the current shell:
+
+```bash
+export PATH="$HOME/.config/omarchy/plugins/case.monitor-switcher/bin:$PATH"
+```
+
+Commands accept an output name (`DP-3`), case-insensitive alias (`MSI`), or
+1-based config-order number (`1`):
+
+```bash
+monitor-switcher state                   # monitor table and overlap warnings
+monitor-switcher state --json            # metadata, modes and pending trial
+monitor-switcher toggle 1
+monitor-switcher enable MSI
+monitor-switcher disable DP-2
+monitor-switcher scale MSI 1.875          # round to a Hyprland-compatible scale
+monitor-switcher refresh MSI 240         # begin trial; prints confirmation token
+monitor-switcher confirm <token>         # keep the trial mode
+monitor-switcher revert <token>          # restore previous settings
+monitor-switcher apply                   # apply the saved layout
+```
+
+Refresh requests must match an advertised rate, e.g. `74.98` rather than `75`
+when the monitor advertises `74.98`. Only connected, active monitors can start
+a refresh trial.
+
+### Arrange Displays
+
+```bash
+monitor-switcher plan                    # compute layout without applying it
+monitor-switcher move LG 2048x0          # pin an origin in logical pixels
+monitor-switcher move LG above MSI       # left-of, right-of, above or below
+monitor-switcher swap MSI LG             # swap pack-order entries; clear their pins
+monitor-switcher pack                    # clear all pins; pack left-to-right
+```
+
+Geometry comes from configured resolution, scale and rotation, not a temporary
+live fallback. `plan` does not apply a layout, but may update config metadata.
+Use this plugin or another monitor-layout manager, not both: tools writing
+rules for the same output can overwrite each other.
 
 ## Configuration
 
-`~/.config/monitor-switcher/config.json` — created from your live setup on
-first run. Array order is the left-to-right packing order:
+Edit `~/.config/monitor-switcher/config.json`, then run `monitor-switcher apply`.
+Array order determines packing and shortcut numbers:
 
 ```json
 [
-  { "output": "DP-3", "alias": "MSI",  "scale": 1.875 },
-  { "output": "DP-2", "alias": "LG",   "scale": 1.25, "mode": "3840x1600@75" },
+  { "output": "DP-3", "alias": "MSI", "scale": 1.875, "mode": "3840x2160@240" },
+  { "output": "DP-2", "alias": "LG", "scale": 1.25, "mode": "3840x1600@74.98" },
   { "output": "DP-1", "alias": "Acer", "scale": 1.875, "transform": 0 }
 ]
 ```
 
-| Field       | Default       | Meaning                                  |
-|-------------|---------------|------------------------------------------|
-| `output`    | (required)    | Hyprland output name (`hyprctl monitors all`) |
-| `alias`     | model name    | Display name in the panel; also usable as CLI/keybind id |
-| `scale`     | live value    | Hyprland scale factor                    |
-| `mode`      | `"preferred"` | Mode string, e.g. `"3840x2160@240"`      |
-| `transform` | `0`           | Hyprland transform (1 = 90°, 3 = 270°)   |
-| `position`  | (packed)      | Explicit `"XxY"` pin in logical pixels; unset = pack in array order |
-| `mode_w`/`mode_h` | (managed) | Native-mode snapshot used for packing math when `mode` is `"preferred"` — written by the tool; pin an explicit `mode` instead of editing these |
+| Field | Default | Meaning |
+|---|---|---|
+| `output` | Required | Connector name from `hyprctl monitors all` |
+| `alias` | Monitor model | Display name and optional CLI identifier |
+| `scale` | Current scale | Per-monitor scale factor |
+| `mode` | `preferred` | Hyprland mode, such as `3840x2160@240` |
+| `transform` | `0` | Rotation/reflection; `1` is 90 degrees, `3` is 270 degrees |
+| `position` | Automatic packing | Optional pinned origin, such as `2048x0` |
+| `mode_w`, `mode_h` | Managed | Geometry snapshots for preferred mode; do not edit manually |
 
-After editing: `monitor-switcher apply`. Newly connected monitors are
-adopted automatically (appended rightmost with their current scale). Every
-apply is pre-flight validated: if the resulting boxes would overlap, nothing
-is written and the current layout stays — fix the pins with
-`monitor-switcher move`/`pack`.
-
-Your hand-written `~/.config/hypr/monitors.lua` only needs a wildcard
-fallback rule for monitors not managed by this plugin:
+Keep a wildcard fallback in `~/.config/hypr/monitors.lua` for unmanaged outputs,
+rather than competing explicit rules:
 
 ```lua
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 ```
 
-## Architecture
+| State file | Purpose |
+|---|---|
+| `~/.config/monitor-switcher/config.json` | Monitor order and settings |
+| `~/.local/state/monitor-switcher/state.json` | Disabled outputs |
+| `~/.local/state/monitor-switcher/refresh-pending.json` | Temporary trial and rollback backup |
+| `~/.local/state/omarchy/toggles/hypr/monitor-switcher.lua` | Generated rules sourced on reload |
 
-One bash backend (`bin/monitor-switcher`) owns **all** toggle/layout logic.
-The panel is a vendored copy of Omarchy's Display widget whose
-`toggleDisplay()` calls the backend instead of `hyprctl keyword monitor`;
-the bar popup and any keybindings are thin callers, so behavior can never
-drift between interfaces. Layout geometry is computed from the config
-(never from a monitor's transient live mode), validated for overlaps, and
-only then written:
+File access is guarded and bounded; writes are staged and atomically renamed.
+Layout commands are serialized. Refresh trials back up both config and generated
+rules, validate reload results, and verify the active mode before confirmation.
 
+## Update
+
+For a regular Git-managed installation:
+
+```bash
+omarchy plugin update case.monitor-switcher
 ```
-Panel.qml (vendored fork) ──┐
-                            ├─► bin/monitor-switcher ─► validate ─► write generated Lua ─► hyprctl reload
-SUPER+SHIFT+CTRL+1/2/3    ──┘
-```
 
-State files:
+The updater shows the diff, fast-forwards after confirmation, and validates
+locally. Marketplace verification is a separate exact-commit snapshot; it does
+not pin an installed plugin to that commit.
 
-| File | Role |
-|------|------|
-| `~/.config/monitor-switcher/config.json` | Your settings: order, alias, scale, mode, transform per monitor |
-| `~/.local/state/monitor-switcher/state.json` | Runtime state: which outputs are off |
-| `~/.local/state/omarchy/toggles/hypr/monitor-switcher.lua` | **Generated** layout; auto-sourced by Omarchy on every reload |
-
-**Why the generated-Lua approach:** `hyprctl keyword monitor X,disable` is
-runtime-only — it lives in no config file, so the next `hyprctl reload`
-re-applies `monitors.lua` and silently turns the display back on. Reloads
-happen for many reasons: theme switches, `omarchy-refresh`, and, on
-multi-monitor desktops, the `monitor-watch` daemon's modeless-recovery loop
-(a monitor that comes up modeless — partial EDID, powered off at boot —
-keeps it retrying). Routing state through the toggle directory makes the
-disable part of the config itself — the same mechanism Omarchy's own
-laptop-display toggle uses (`internal-monitor-disable.lua`).
+Maintainers: bump `manifest.json`, update [CHANGELOG.md](CHANGELOG.md) and root
+`preview.png`, then push. The marketplace's daily refresh can pick up new metadata
+and previews. To verify the new snapshot, submit the
+[Verify or update a listed plugin form](https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=verify-plugin.yml)
+with the full new HEAD SHA and action **Verify and publish a newer upstream
+commit**. Passing automation still requires marketplace-maintainer approval.
+See the [marketplace update guide](https://github.com/omacom/omarchy-plugin-marketplace/blob/main/SUBMISSION.md#update-an-existing-listing).
 
 ## Development
 
-The repo is developed live through a symlink:
+For live development, link the repository into the user plugin directory:
 
 ```bash
 ln -s ~/Work/omarchy-monitor-switcher ~/.config/omarchy/plugins/case.monitor-switcher
-omarchy plugin validate ~/Work/omarchy-monitor-switcher  # the validator rejects the symlinked path itself
-omarchy restart shell   # QML changes need this: a rescan does not rebuild live bar widgets
+omarchy plugin validate ~/Work/omarchy-monitor-switcher
+omarchy restart shell
 ```
 
-Backend (`bin/monitor-switcher`) changes need no restart — the panel spawns
-the script fresh on every call.
+Validate using the real repository path, not the installed symlink. Backend edits
+apply on the next invocation. Restart the shell if QML changes do not appear.
+Never modify packaged Omarchy files.
 
-`Panel.qml` and `Model.js` are a **minimal-delta fork** of Omarchy's Display
-widget — every local change is fenced with a `monitor-switcher fork` comment
-(`grep -n "monitor-switcher fork" Panel.qml`). See `UPSTREAM.md` for the
-provenance, the exact patch list, and the re-sync ritual to run after each
-Omarchy update. Requires Omarchy ≥ 4.0.
+```bash
+node --test tests/*.test.js
+bash -n bin/monitor-switcher
+```
 
-Backend tests run against the live compositor; the useful manual matrix is:
-toggle each monitor off/on, toggle the middle one (re-pack), refuse-to-kill
-the last display, and confirm off-states survive `hyprctl reload` + 10s
-(the watcher's reaction window). For the forked panel additionally check:
-brightness slider + scroll-wheel + OSD, text-size stops, scale pills, and
-`omarchy-shell case.monitor-switcher state`.
+Backend tests use temporary HOME directories and a fail-closed compositor stub,
+not live displays. They cover mode selection, fractional rates, pending trials,
+watchdog recovery, rollback, concurrency, unsafe paths and layout guards. Model
+tests cover refresh matching, gallery proportions and exact scale stops.
+
+Before shipping, inspect the live gallery and keyboard navigation, confirm that
+scrolling cannot edit values, and check that toggles survive a reload. IPC state:
+`omarchy-shell case.monitor-switcher state`. See [UPSTREAM.md](UPSTREAM.md) before
+syncing changes from Omarchy's widget.
 
 ## Uninstall
 
+Confirm or revert any pending refresh trial before removing the plugin.
+
 ```bash
-omarchy plugin enable omarchy.monitor   # restore the built-in Display widget
+omarchy plugin enable omarchy.monitor
 omarchy plugin remove case.monitor-switcher
 rm -f ~/.local/state/omarchy/toggles/hypr/monitor-switcher.lua
 hyprctl reload
 ```
 
-Then re-add any explicit monitor rules you want to `~/.config/hypr/monitors.lua`.
+Restore any explicit monitor rules you need in `~/.config/hypr/monitors.lua`.
 
 ## License
 
-The plugin's own code is MIT (see `LICENSE`). `Panel.qml` and `Model.js`
-are derived from Omarchy, MIT, (c) David Heinemeier Hansson
-(see `LICENSE.upstream`).
+MIT. See [LICENSE](LICENSE) for plugin code and
+[LICENSE.upstream](LICENSE.upstream) for the Omarchy-derived widget code.

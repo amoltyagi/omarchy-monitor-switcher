@@ -30,7 +30,7 @@ function cleanScale(scale, width, height) {
   var scaleUnits = Math.round(requested * 120)
   if (scaleUnits > divisor) scaleUnits = divisor
   while (divisor % scaleUnits !== 0) scaleUnits++
-  return normalizeScale(scaleUnits / 120)
+  return String(Math.round(scaleUnits / 120 * 1000000) / 1000000)
 }
 
 function matchingScaleIndex(scales, currentScale, width, height) {
@@ -41,7 +41,7 @@ function matchingScaleIndex(scales, currentScale, width, height) {
   var bestDistance = Infinity
   var normalizedCurrent = normalizeScale(current)
   for (var i = 0; i < scales.length; i++) {
-    if (cleanScale(scales[i], width, height) !== normalizedCurrent) continue
+    if (normalizeScale(cleanScale(scales[i], width, height)) !== normalizedCurrent) continue
 
     var distance = Math.abs(Number(scales[i]) - current)
     if (distance < bestDistance) {
@@ -53,7 +53,8 @@ function matchingScaleIndex(scales, currentScale, width, height) {
 }
 
 function availableScales(scales, width, height) {
-  if (!Array.isArray(scales) || Number(width) <= 0 || Number(height) <= 0) return scales || []
+  if (!Array.isArray(scales) || !(Number(width) > 0 && Number(height) > 0)
+      || !isFinite(Number(width)) || !isFinite(Number(height))) return scales || []
 
   var byEffectiveScale = {}
   for (var i = 0; i < scales.length; i++) {
@@ -77,6 +78,15 @@ function availableScales(scales, width, height) {
     .map(function(key) { return byEffectiveScale[key] })
     .sort(function(a, b) { return a.index - b.index })
     .map(function(candidate) { return candidate.value })
+}
+
+// monitor-switcher fork: keep a custom current scale as an exact slider stop.
+function scaleStops(presets, current, width, height) {
+  var values = presets.slice()
+  if (isFinite(Number(current)) && Number(current) >= 0.25 && Number(current) <= 5)
+    values.push(String(current))
+  values.sort(function(a, b) { return Number(a) - Number(b) })
+  return availableScales(values, width, height)
 }
 
 function brightnessName(percent) {
@@ -111,6 +121,27 @@ function parseDisplays(raw) {
   }
 }
 
+// monitor-switcher fork: live refresh matching and display illustration geometry.
+function formatRefreshRate(value) {
+  if (value === null || value === undefined || Number(value) <= 0 || !isFinite(Number(value))) return "--"
+  return String(Math.round(Number(value) * 100) / 100)
+}
+
+function matchingRefreshIndex(modes, rate) {
+  if (!Array.isArray(modes) || Number(rate) <= 0 || !isFinite(Number(rate))) return -1
+  for (var i = 0; i < modes.length; i++) {
+    if (Math.round(Number(modes[i].rate) * 100) === Math.round(Number(rate) * 100)) return i
+  }
+  return -1
+}
+
+function displayAspectRatio(display) {
+  var w = Number(display && (display.configuredWidth || display.width))
+  var h = Number(display && (display.configuredHeight || display.height))
+  if (!(w > 0 && h > 0 && isFinite(w) && isFinite(h))) return 16 / 9
+  return Number(display.transform || 0) % 2 === 1 ? h / w : w / h
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     clampBrightness: clampBrightness,
@@ -118,7 +149,11 @@ if (typeof module !== "undefined") {
     cleanScale: cleanScale,
     matchingScaleIndex: matchingScaleIndex,
     availableScales: availableScales,
+    scaleStops: scaleStops,
     brightnessName: brightnessName,
-    parseDisplays: parseDisplays
+    parseDisplays: parseDisplays,
+    formatRefreshRate: formatRefreshRate,
+    matchingRefreshIndex: matchingRefreshIndex,
+    displayAspectRatio: displayAspectRatio
   }
 }
