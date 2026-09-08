@@ -685,10 +685,12 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // monitor-switcher fork: track *managed* monitors (root.displays lists
-    // outputs toggled off too) instead of enabled screens — a monitor switched
-    // off via this plugin must not collapse the bar glyph to the single one.
-    text: root.displays.length > 1 ? "󰍺" : "󰍹"
+    // monitor-switcher fork: stable vector identity, independent of font glyphs.
+    iconComponent: Component {
+      MonitorLogo {
+        color: button.active && button.useActiveColor ? button.activeColor : button.foreground
+      }
+    }
     tooltipText: "Monitor Switcher" // monitor-switcher fork
     onPressed: function(b) { root.toggle() }
   }
@@ -743,6 +745,15 @@ Panel {
             width: parent.width
             implicitHeight: heroTitle.implicitHeight
 
+            MonitorLogo {
+              id: heroLogo
+              width: heroTitle.implicitHeight
+              height: width
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              color: Color.accent
+            }
+
             Text {
               id: heroTitle
               text: "Monitor Switcher"
@@ -750,7 +761,9 @@ Panel {
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.title
               font.bold: true
-              anchors.left: parent.left
+              anchors.left: heroLogo.right
+              anchors.leftMargin: Style.space(10)
+              anchors.verticalCenter: parent.verticalCenter
               anchors.right: desktopStatus.left
               anchors.rightMargin: Style.space(10)
               elide: Text.ElideRight

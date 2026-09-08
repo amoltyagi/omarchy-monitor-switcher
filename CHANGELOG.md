@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.6.1 - 2026-09-08
+
+- Added an original two-monitor/slider logo to the bar, panel header and
+  README. The live vector follows the active theme without changing controls.
+- Refreshed the MSI 4K/240 Hz screenshots to show the branded panel header.
+
 ## 2.6.0 - 2026-09-08
 
 - Integrated On/Off buttons and number/size/resolution/scale metadata into

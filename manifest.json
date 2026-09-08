@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "case.monitor-switcher",
   "name": "Monitor Switcher",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "author": "amoltyagi",
   "license": "MIT",
   "description": "A keyboard-friendly display control center for Omarchy: monitor gallery with persistent On/Off controls, live refresh rates, 20-second Keep/Revert trials and wheel-safe brightness, text-size and scale sliders",

@@ -31,11 +31,10 @@ grep -n "monitor-switcher fork" Panel.qml
    No extra refresh patch is needed: `actionProc.onRunningChanged` already
    calls `refresh()`, and the backend's `hyprctl reload` has settled by the
    time the process exits.
-3. **Bar glyph** — tracks `root.displays.length` (all *managed* monitors,
-   including toggled-off ones) instead of `Quickshell.screens.length`
-   (enabled screens only), so switching a monitor off doesn't collapse the
-   icon to the single-display variant. Also adds `tooltipText: "Monitor
-   Switcher"`.
+3. **Bar logo** - `MonitorLogo.qml` provides a theme-tinted vector through
+   `BarIconButton.iconComponent`, with the existing tooltip and click behavior.
+   Its two-screen/slider mark stays stable as monitors are switched off.
+   The same mark appears beside the panel title and in the README's `logo.svg`.
 4. **Panel title** — hero reads "Monitor Switcher" instead of "Display", so
    screenshots in issue reports are attributable to the right project.
 5. **Named, numbered gallery** — a second `Process` polls

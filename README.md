@@ -1,3 +1,5 @@
+<img src="logo.svg" alt="Monitor Switcher logo" width="88" height="88">
+
 # Monitor Switcher
 
 **Your displays, in one place. Settings that stay put.**
@@ -7,10 +9,14 @@ Turn monitors on and off directly from a visual gallery, see their actual
 refresh rates, and adjust brightness, text size and scale without leaving the
 panel. Monitor settings persist across Hyprland reloads and reboots.
 
-<img src="preview.png" alt="Monitor Switcher 2.6.0: MSI at 3840x2160 and 240 Hz, gallery On/Off controls, stepped sliders and keyboard shortcut footer" width="440">
+<img src="preview.png" alt="Monitor Switcher 2.6.1: branded panel with MSI at 3840x2160 and 240 Hz, gallery On/Off controls, stepped sliders and keyboard shortcut footer" width="440">
 
-*Actual panel capture: MSI 4K OLED at 240 Hz, LG ultrawide on, Acer off.
+*Actual panel capture: MSI 4K OLED at 240 Hz alongside LG and Acer displays.
 Colors and typography follow the active Omarchy theme.*
+
+The original [logo](logo.svg) is also used in the bar and panel header as a
+theme-tinted vector. It is included with the plugin; it does not depend on a
+font glyph or a marketplace-provided icon.
 
 This is an **unofficial fork** of Omarchy's `omarchy.monitor` widget, originally
 vendored from Omarchy 4.0.0 under MIT. It is not affiliated with or supported by
