@@ -257,7 +257,10 @@ syncing changes from Omarchy's widget.
 
 ## Uninstall
 
-Confirm or revert any pending refresh trial before removing the plugin.
+Confirm or revert any pending refresh trial before removing the plugin. The
+generated toggle file only applies while the plugin is installed and enabled, so
+it goes inert as soon as the plugin is disabled or removed; the explicit `rm`
+below just clears the leftover file.
 
 ```bash
 omarchy plugin enable omarchy.monitor

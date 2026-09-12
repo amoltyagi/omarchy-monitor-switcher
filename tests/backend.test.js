@@ -75,6 +75,27 @@ test('clean configerrors can contain blank entries on Hyprland Lua builds', asyn
   assert.equal(result.code, 0, result.stderr);
 });
 
+test('generated toggle applies only while the plugin is installed and enabled', async t => {
+  const f = await fixture(t);
+  await f.ok('apply');
+  const shellDir = path.join(f.home, '.config/omarchy');
+  await mkdir(shellDir, { recursive: true });
+
+  // Disabled: the plugin's id is absent from shell.json, so the saved layout
+  // must not run and cannot override another tool's monitor configuration.
+  await writeFile(path.join(shellDir, 'shell.json'), JSON.stringify({ bar: { layout: [] } }));
+  assert.equal(await applyGeneratedLua(f.generated, f.home), 0);
+
+  // No shell.json at all (fresh install): still inert.
+  await rm(path.join(shellDir, 'shell.json'));
+  assert.equal(await applyGeneratedLua(f.generated, f.home), 0);
+
+  // Enabled: the id appears in shell.json, so the rules apply.
+  await writeFile(path.join(shellDir, 'shell.json'),
+    JSON.stringify({ bar: { layout: [{ id: 'case.monitor-switcher' }] } }));
+  assert.ok(await applyGeneratedLua(f.generated, f.home) > 0);
+});
+
 async function waitFor(check, timeout = 6000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -82,6 +103,19 @@ async function waitFor(check, timeout = 6000) {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   assert.fail('timed out waiting for sandbox condition');
+}
+
+// Sources the generated toggle Lua with a stub `hl` and reports how many
+// monitor rules it applied, the same way Hyprland loads it on a reload.
+function applyGeneratedLua(luaFile, home) {
+  return new Promise((resolve, reject) => {
+    const chunk = 'local n = 0; hl = { monitor = function() n = n + 1 end }; dofile(os.getenv("MS_LUA")); io.write(n)';
+    const child = spawn('/usr/bin/lua', ['-e', chunk], { env: { HOME: home, MS_LUA: luaFile } });
+    let out = '';
+    child.stdout.on('data', data => { out += data; });
+    child.on('error', reject);
+    child.on('close', code => code === 0 ? resolve(Number(out)) : reject(new Error(`lua exited ${code}`)));
+  });
 }
 
 async function fixture(t, options = {}) {

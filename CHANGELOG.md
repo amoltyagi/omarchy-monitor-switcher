@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- The generated toggle file is now gated on the plugin still being installed and
+  enabled, so disabling or removing the plugin stops its saved layout from being
+  reapplied on reload. Previously the file kept loading from Omarchy's toggle
+  directory (after `monitors.lua`) and silently overrode monitors that another
+  tool, or the user, had turned off.
+
 ## 2.6.1 - 2026-09-08
 
 - Added an original two-monitor/slider logo to the bar, panel header and
