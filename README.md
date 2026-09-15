@@ -218,6 +218,11 @@ The updater shows the diff, fast-forwards after confirmation, and validates
 locally. Marketplace verification is a separate exact-commit snapshot; it does
 not pin an installed plugin to that commit.
 
+Updating from a version that did not gate the generated file needs one layout
+regeneration so the toggle file picks up the gate: run `monitor-switcher apply`
+(or any toggle, move, scale, ...). Until then the old, ungated file keeps being
+sourced, exactly as before.
+
 Maintainers: bump `manifest.json`, update [CHANGELOG.md](CHANGELOG.md) and root
 `preview.png`, then push. The marketplace's daily refresh can pick up new metadata
 and previews. To verify the new snapshot, submit the

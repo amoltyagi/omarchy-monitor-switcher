@@ -80,20 +80,38 @@ test('generated toggle applies only while the plugin is installed and enabled', 
   await f.ok('apply');
   const shellDir = path.join(f.home, '.config/omarchy');
   await mkdir(shellDir, { recursive: true });
+  const shell = config => writeFile(path.join(shellDir, 'shell.json'), JSON.stringify(config));
 
-  // Disabled: the plugin's id is absent from shell.json, so the saved layout
-  // must not run and cannot override another tool's monitor configuration.
-  await writeFile(path.join(shellDir, 'shell.json'), JSON.stringify({ bar: { layout: [] } }));
+  // No shell.json at all (fresh install): inert.
   assert.equal(await applyGeneratedLua(f.generated, f.home), 0);
 
-  // No shell.json at all (fresh install): still inert.
-  await rm(path.join(shellDir, 'shell.json'));
+  // Present, but the id is nowhere: disabled, so the saved layout must not run.
+  await shell({ version: 1, bar: { layout: { left: ['omarchy.menu'], center: [], right: [] } }, plugins: [] });
   assert.equal(await applyGeneratedLua(f.generated, f.home), 0);
 
-  // Enabled: the id appears in shell.json, so the rules apply.
-  await writeFile(path.join(shellDir, 'shell.json'),
-    JSON.stringify({ bar: { layout: [{ id: 'case.monitor-switcher' }] } }));
+  // A near-miss id must not match.
+  await shell({ version: 1, bar: { layout: { left: [], center: [], right: ['case.monitor-switcher-extra'] } }, plugins: [] });
+  assert.equal(await applyGeneratedLua(f.generated, f.home), 0);
+
+  // Malformed JSON fails closed.
+  await writeFile(path.join(shellDir, 'shell.json'), '{ not json');
+  assert.equal(await applyGeneratedLua(f.generated, f.home), 0);
+
+  // Real bar.layout.right object entry: enabled.
+  await shell({ version: 1, bar: { layout: { left: ['omarchy.menu'], center: ['omarchy.clock'], right: [{ id: 'case.monitor-switcher' }] } }, plugins: [] });
   assert.ok(await applyGeneratedLua(f.generated, f.home) > 0);
+
+  // A plain id string in any section: enabled.
+  await shell({ version: 1, bar: { layout: { left: [], center: ['case.monitor-switcher'], right: [] } }, plugins: [] });
+  assert.ok(await applyGeneratedLua(f.generated, f.home) > 0);
+
+  // A top-level plugins[] entry: enabled.
+  await shell({ version: 1, bar: { layout: { left: [], center: [], right: [] } }, plugins: [{ id: 'case.monitor-switcher' }] });
+  assert.ok(await applyGeneratedLua(f.generated, f.home) > 0);
+
+  // disabledPlugins wins over a bar layout entry.
+  await shell({ version: 1, bar: { layout: { left: [], center: [], right: [{ id: 'case.monitor-switcher' }] } }, plugins: [], disabledPlugins: ['case.monitor-switcher'] });
+  assert.equal(await applyGeneratedLua(f.generated, f.home), 0);
 });
 
 async function waitFor(check, timeout = 6000) {
