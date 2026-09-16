@@ -36,8 +36,13 @@ Panel {
   property string actionError: ""
   property string actionVerb: ""
   property string actionTarget: ""
+  property string actionNotice: ""
+  property string noticeKind: ""
+  property bool sharedActionRunning: false
+  property var readTicket: null
+  property bool refreshQueued: false
   property bool reopenAfterAction: false
-  readonly property bool layoutBusy: actionProc.running || refreshPending !== null
+  readonly property bool layoutBusy: sharedActionRunning || refreshPending !== null
 
   property int brightnessPercent: 0
   property bool brightnessAvailable: false
@@ -66,7 +71,29 @@ Panel {
   }
 
   function refresh() {
-    if (!switcherProc.running) switcherProc.running = true
+    if (switcherProc.running) { refreshQueued = true; return }
+    readTicket = PanelRegistry.startRead()
+    switcherProc.running = true
+  }
+
+  function acceptSnapshot(state) {
+    var map = {}, focused = ""
+    state.monitors.forEach(function(m) { map[m.output] = m; if (m.focused) focused = m.output })
+    switcherMeta = map
+    if (JSON.stringify(displays) !== JSON.stringify(state.monitors)) displays = state.monitors
+    enabledDisplayCount = state.enabledCount
+    focusedMonitor = focused
+    stateError = ""
+    var pending = state.refreshPending || null
+    if (JSON.stringify(pending) !== JSON.stringify(refreshPending)) {
+      refreshPending = pending
+      if (pending && pending.kind === "arrangement") arranging = true
+      if (pending) { focusSection = "confirmation"; selectedIndex = 0; cursorActive = true }
+    }
+    // A blocked second action is a transient status, not an error to leave behind.
+    if (noticeKind === "pending" && !pending) { actionNotice = ""; noticeKind = "" }
+    refreshClock = Date.now() / 1000
+    refreshBrightness()
   }
 
   function refreshBrightness() {
@@ -79,8 +106,12 @@ Panel {
 
   function runAction(verb, output, value) {
     var confirmation = verb === "confirm" || verb === "revert"
-    if (actionProc.running || (!confirmation && (layoutBusy || stateError !== ""))) return
+    if (actionProc.running || sharedActionRunning
+        || (!confirmation && (stateError !== "" || (verb !== "focus" && refreshPending !== null)))) return
+    if (!PanelRegistry.beginAction(root)) return
     actionError = ""
+    actionNotice = ""
+    noticeKind = ""
     actionVerb = verb
     actionTarget = output
     reopenAfterAction = opened && verb !== "focus"
@@ -208,7 +239,8 @@ Panel {
   function stateIpc() {
     return JSON.stringify({brightness: brightnessPercent, brightnessAvailable: brightnessAvailable,
       focusedMonitor: focusedMonitor, scale: focusedMeta.scale, refreshRate: focusedMeta.refreshRate,
-      refreshPending: refreshPending, actionError: actionError, stateError: stateError, displays: displays,
+      refreshPending: refreshPending, actionError: actionError, actionNotice: actionNotice,
+      actionRunning: sharedActionRunning, stateError: stateError, displays: displays,
       ui: {arranging: arranging, focusSection: focusSection, selectedIndex: selectedIndex,
         popup: {screen: screenName, x: panel.cardOrigin.x, y: panel.cardOrigin.y, width: panel.contentWidth, height: panel.contentHeight},
         editorOutput: gallery.editorOutput, editorField: gallery.editorField, editorIndex: gallery.editorIndex,
@@ -245,7 +277,7 @@ Panel {
   }
   onOpenedChanged: {
     if (opened) {
-      refresh()
+      PanelRegistry.synchronize()
       focusSection = refreshPending ? "confirmation" : arranging ? "arrangement" : galleryMonitors.length ? "monitors" : "textsize"
       selectedIndex = refreshPending ? 0 : Math.max(0, galleryMonitors.findIndex(function(m) { return m.output === root.focusedMonitor }))
       cursorActive = false
@@ -254,43 +286,37 @@ Panel {
 
   Process {
     id: switcherProc
-    command: ["bash", "-o", "pipefail", "-c", "\"$1\" state --json 2>&1 | head -c 262144", "monitor-switcher", root.scriptPath]
+    command: ["bash", "-o", "pipefail", "-c", "\"$1\" state --json 2> >(head -c 65536 >&2) | head -c 262144", "monitor-switcher", root.scriptPath]
     stdout: StdioCollector { id: stateOutput; waitForEnd: true }
+    stderr: StdioCollector { id: stateErrors; waitForEnd: true }
     onExited: function(exitCode) {
+      var ticket = root.readTicket
+      var again = root.refreshQueued
+      root.refreshQueued = false
       if (exitCode !== 0) {
-        root.stateError = String(stateOutput.text || "Could not read monitor state").trim()
-        return
-      }
-      try {
-        var state = JSON.parse(String(stateOutput.text || ""))
-        if (!Array.isArray(state.monitors)) throw new Error("Invalid monitor snapshot")
-        var map = {}, focused = ""
-        state.monitors.forEach(function(m) { map[m.output] = m; if (m.focused) focused = m.output })
-        root.switcherMeta = map
-        // Avoid rebuilding card delegates and losing hover/scroll on identical polls.
-        if (JSON.stringify(root.displays) !== JSON.stringify(state.monitors)) root.displays = state.monitors
-        root.enabledDisplayCount = state.enabledCount
-        root.focusedMonitor = focused
-        root.stateError = ""
-        var pending = state.refreshPending || null
-        if (JSON.stringify(pending) !== JSON.stringify(root.refreshPending)) {
-          root.refreshPending = pending
-          if (pending && pending.kind === "arrangement") root.arranging = true
-          if (pending) { root.focusSection = "confirmation"; root.selectedIndex = 0; root.cursorActive = true }
+        PanelRegistry.readFailed(String(stateErrors.text || "Could not read monitor state").trim(), ticket)
+      } else {
+        try {
+          var state = JSON.parse(String(stateOutput.text || ""))
+          if (!Array.isArray(state.monitors)) throw new Error("Invalid monitor snapshot")
+          PanelRegistry.publishSnapshot(state, ticket)
+        } catch (error) {
+          PanelRegistry.readFailed("Could not read monitor state: " + error.message, ticket)
         }
-        root.refreshClock = Date.now() / 1000
-        root.refreshBrightness()
-      } catch (error) {
-        root.stateError = "Could not read monitor state: " + error.message
       }
+      if (again || PanelRegistry.outdated(ticket)) root.refresh()
     }
   }
   Process {
     id: actionProc
     stdout: StdioCollector { id: actionOutput; waitForEnd: true }
     onExited: function(exitCode) {
-      if (exitCode !== 0) root.actionError = String(actionOutput.text || "Display change failed").trim()
-      root.refresh()
+      var feedback = Model.actionFeedback(exitCode, actionOutput.text)
+      root.actionError = feedback.error
+      root.actionNotice = feedback.notice
+      root.noticeKind = feedback.kind
+      if (feedback.kind === "complete") noticeTimer.restart()
+      PanelRegistry.actionFinished(root)
       if (root.reopenAfterAction && !root.opened) reopenTimer.restart()
       root.reopenAfterAction = false
     }
@@ -321,6 +347,11 @@ Panel {
   Timer { id: reopenTimer; interval: 600; onTriggered: root.open() }
   Timer { id: brightnessDebounce; interval: 180; onTriggered: root.setBrightness(root.brightnessPercent) }
   Timer { id: reflowSettle; interval: 350; onTriggered: root.reflowingText = false }
+  Timer {
+    id: noticeTimer
+    interval: 6000
+    onTriggered: if (root.noticeKind === "complete") { root.actionNotice = ""; root.noticeKind = "" }
+  }
   Timer {
     id: shortcutScroll
     interval: 80
@@ -464,6 +495,23 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
+          SettingChip {
+            visible: root.actionError !== "" && root.stateError === ""
+            text: "Dismiss"
+            chevron: false
+            onClicked: root.actionError = ""
+          }
+
+          Text {
+            width: parent.width
+            visible: root.actionNotice !== ""
+            text: root.actionNotice
+            wrapMode: Text.WordWrap
+            color: Util.alpha(root.bar.foreground, 0.7)
+            font.family: root.uiFontFamily
+            font.pixelSize: Style.font.caption
+          }
+
           DisplayGallery {
             id: gallery
             width: parent.width
@@ -473,6 +521,7 @@ Panel {
             foreground: root.bar.foreground
             fontFamily: root.uiFontFamily
             busy: root.layoutBusy
+            focusBlocked: root.sharedActionRunning
             stale: root.stateError !== ""
             enabledCount: root.enabledDisplayCount
             pending: root.refreshPending

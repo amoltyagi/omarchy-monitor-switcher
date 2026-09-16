@@ -1,3 +1,17 @@
+# Monitor Switcher 3.0.1
+
+## Clearer confirmations.
+
+- No stale red “change pending” message after a preview ends.
+- All monitor panels share the same action and confirmation state.
+- Choosing the current setting does nothing; it no longer starts a preview.
+- Focus another display without cancelling the preview.
+- Normal timeouts are status messages. Actual failures remain visible.
+
+Existing settings and shortcuts are preserved.
+
+---
+
 # Monitor Switcher 3.0
 
 ## Your desk. In order.

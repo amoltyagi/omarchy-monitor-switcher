@@ -219,6 +219,26 @@ function cardChoices(display, field) {
   return []
 }
 
+function settingIsCurrent(display, field, value) {
+  if (!display || !display.usable) return false
+  if (field === 'scale') return Math.abs(Number(value) - Number(display.scale)) < 0.0001
+  var mode = /^(\d+)x(\d+)@([\d.]+)$/.exec(String(value))
+  return !!mode && Number(mode[1]) === Number(display.width) && Number(mode[2]) === Number(display.height)
+    && Math.round(Number(mode[3]) * 100) === Math.round(Number(display.refreshRate) * 100)
+}
+
+function actionFeedback(exitCode, output) {
+  var text = String(output || '').trim()
+  if (exitCode === 0) return {error: '', notice: '', kind: ''}
+  if (exitCode === 75 || /^(?:monitor-switcher: )?(?:refresh|display) change pending;/.test(text))
+    return {error: '', notice: 'Confirm or revert the current display change first.', kind: 'pending'}
+  if (exitCode === 76)
+    return {error: '', notice: 'The preview has ended. Your previous settings were restored.', kind: 'complete'}
+  if (exitCode === 77)
+    return {error: '', notice: '', kind: ''}
+  return {error: text.replace(/^monitor-switcher:\s*/gm, '') || 'The display change could not be applied.', notice: '', kind: ''}
+}
+
 function arrangementBoxes(monitors) {
   return monitors.filter(function(m) { return m.usable }).map(function(m) {
     var rotated = Number(m.liveTransform || 0) % 2
@@ -320,6 +340,8 @@ if (typeof module !== "undefined") {
     galleryLayout: galleryLayout,
     resolutionChoices: resolutionChoices,
     cardChoices: cardChoices,
+    settingIsCurrent: settingIsCurrent,
+    actionFeedback: actionFeedback,
     arrangementBoxes: arrangementBoxes,
     arrangementView: arrangementView,
     boxesTouch: boxesTouch,

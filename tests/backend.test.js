@@ -366,7 +366,7 @@ test('rollback reload failure retains the transaction and refuses confirm while 
   assert.equal(state.refreshPending.reverting, true);
   assert.match((await f.run('confirm', pending.token)).stderr, /confirmation refused/);
   assert.equal((await f.json(f.pending)).token, pending.token);
-  assert.match((await f.run('refresh', 'DP-1', '120')).stderr, /refresh change pending/);
+  assert.match((await f.run('refresh', 'DP-1', '120')).stderr, /display change pending/);
   // With no worker, confirm must recover but must never keep a reverting change.
   await f.stopWatchdog();
   await f.control({});
@@ -413,7 +413,7 @@ test('pending state is read-only; all concurrent modifiers including plan are re
     ['enable', 'DP-2'], ['disable', 'DP-2'], ['move', 'DP-2', '3000x0'], ['swap', '1', '2'],
     ['pack'], ['apply'], ['plan', '--json']];
   const results = await Promise.all(commands.map(args => f.run(...args)));
-  for (const result of results) { assert.notEqual(result.code, 0); assert.match(result.stderr, /refresh change pending/); }
+  for (const result of results) { assert.equal(result.code, 75); assert.match(result.stderr, /display change pending/); }
   const state = JSON.parse((await f.ok('state', '--json')).stdout);
   assert.equal(state.monitors.length, 2);
   assert.equal(await readFile(f.config, 'utf8'), beforeConfig);
@@ -426,7 +426,7 @@ test('concurrent refresh requests serialize and only one can create a transactio
   const f = await fixture(t);
   const results = await Promise.all([f.run('refresh', 'DP-1', '240'), f.run('refresh', 'DP-1', '120')]);
   assert.equal(results.filter(r => r.code === 0).length, 1);
-  assert.match(results.find(r => r.code !== 0).stderr, /refresh change pending/);
+  assert.match(results.find(r => r.code !== 0).stderr, /display change pending/);
   const pending = await f.json(f.pending);
   assert.equal(pending.config, f.originalConfig);
   await f.ok('revert', pending.token);
@@ -475,7 +475,7 @@ test('expired watchdog worker restores both files; confirm cannot keep an expire
     pending.expiresAt = Math.floor(Date.now() / 1000) - 1;
     await f.setPending(pending);
     const result = await f.run(command, pending.token);
-    assert.equal(result.code, command === 'confirm' ? 1 : 0, result.stderr);
+    assert.equal(result.code, command === 'confirm' ? 76 : 0, result.stderr);
     await f.unchanged();
     await f.noPending();
   }
@@ -877,4 +877,32 @@ test('arrangement rejects accepted-but-ineffective compositor positioning and re
   assert.match(result.stderr, /verification failed/);
   await f.unchanged();
   await f.noPending();
+});
+
+test('pending trials permit focus without changing settings and report conflicts with a distinct status', async t => {
+  const f = await fixture(t);
+  await f.ok('refresh', 'DP-1', '240');
+  const pending = await f.json(f.pending);
+  const config = await readFile(f.config, 'utf8');
+  const lua = await readFile(f.generated, 'utf8');
+  await f.ok('focus', 'DP-2');
+  assert.equal((await f.json(path.join(f.home, 'live.json')))[1].focused, true);
+  assert.equal(await readFile(f.config, 'utf8'), config);
+  assert.equal(await readFile(f.generated, 'utf8'), lua);
+  assert.equal((await f.run('disable', 'DP-2')).code, 75);
+  assert.equal((await f.json(f.pending)).token, pending.token);
+  await f.ok('revert', pending.token);
+  assert.equal((await f.run('confirm', pending.token)).code, 77);
+  assert.equal((await f.run('revert', pending.token)).code, 77);
+  await f.unchanged();
+});
+
+test('first-run diagnostics stay on stderr and state stdout remains valid JSON', async t => {
+  const f = await fixture(t);
+  await rm(f.config);
+  const result = await f.ok('state', '--json');
+  assert.match(result.stderr, /created/);
+  const state = JSON.parse(result.stdout);
+  assert.equal(state.monitors.length, 2);
+  assert.equal(state.refreshPending, null);
 });

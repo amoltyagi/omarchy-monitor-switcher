@@ -11,6 +11,7 @@ Item {
   property color foreground: Color.foreground
   property string fontFamily: "sans-serif"
   property bool busy: false
+  property bool focusBlocked: false
   property bool stale: false
   property int enabledCount: 0
   property int cursorIndex: -1
@@ -68,7 +69,9 @@ Item {
   function applyEditor() {
     if (!editorOutput || busy || stale || !choices[editorIndex]) return
     var output = editorOutput, field = editorField, value = choices[editorIndex].value
+    var unchanged = Model.settingIsCurrent(editorMonitor, field, value)
     closeEditor()
+    if (unchanged) return
     // Mode selections include the exact advertised fractional refresh string.
     settingRequested(field === "scale" ? "scale-trial" : "mode", output, value)
   }
@@ -155,7 +158,7 @@ Item {
 
           MouseArea {
             anchors.fill: parent
-            enabled: !gallery.busy && !gallery.stale && !card.editing && !card.confirming
+            enabled: !gallery.focusBlocked && !gallery.stale && !card.editing && !card.confirming
             hoverEnabled: true
             cursorShape: card.modelData.usable ? Qt.PointingHandCursor : Qt.ArrowCursor
             onEntered: gallery.cursorRequested(card.index)

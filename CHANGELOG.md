@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.0.1 — Clearer confirmations — 2026-09-16
+
+- Fixed stale red “refresh change pending” messages after a preview finished.
+- Synchronize pending state across monitor panels. Extra clicks stay blocked
+  until fresh compositor state arrives, including after reopening the panel.
+- Selecting the current setting no longer starts a preview. Focus can change
+  while a preview is pending.
+- Expected confirmation conflicts and timeouts use normal status feedback;
+  genuine failures remain visible and can be dismissed.
+- Keep first-run diagnostics separate from JSON state. Added regressions for
+  cross-panel timing, stale reads, expiry, no-op selections and initialization.
+
 ## 3.0.0 — A major redesign — 2026-09-16
 
 **Your desk. In order.** A major overhaul of the display panel: settings on the

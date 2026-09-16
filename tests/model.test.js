@@ -121,3 +121,24 @@ test('arrangement snaps to edges and validates a connected non-overlapping deskt
   assert.deepEqual(Model.packDisplays([{ ...boxes[0], x: 300 }, { ...boxes[1], x: -600 }]), boxes)
   assert.equal(boxes[1].x, 1920, 'preview helpers must not mutate their input')
 })
+
+test('normal confirmation conflicts and expired previews are statuses, genuine failures remain errors', () => {
+  for (const result of [Model.actionFeedback(75, 'display change pending'),
+    Model.actionFeedback(1, 'monitor-switcher: refresh change pending; confirm or revert its token before other commands')]) {
+    assert.equal(result.error, '')
+    assert.equal(result.kind, 'pending')
+  }
+  assert.equal(Model.actionFeedback(76, 'confirmation refused').kind, 'complete')
+  assert.equal(Model.actionFeedback(77, 'no display change is pending').error, '')
+  assert.equal(Model.actionFeedback(1, 'monitor-switcher: rollback failed').error, 'rollback failed')
+  assert.equal(Model.actionFeedback(0, 'ok').notice, '')
+})
+
+test('selecting the running setting is a no-op, but nearby fractional modes still start a trial', () => {
+  const display = { usable: true, width: 3840, height: 1600, refreshRate: 74.977, scale: 1.25 }
+  assert.equal(Model.settingIsCurrent(display, 'refresh', '3840x1600@74.98'), true)
+  assert.equal(Model.settingIsCurrent(display, 'mode', '3840x1600@59.99'), false)
+  assert.equal(Model.settingIsCurrent(display, 'scale', '1.25'), true)
+  assert.equal(Model.settingIsCurrent(display, 'scale', '1.5'), false)
+  assert.equal(Model.settingIsCurrent({ ...display, usable: false }, 'scale', '1.25'), false)
+})

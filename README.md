@@ -77,6 +77,10 @@ choice; **Revert** restores the previous configuration immediately. Failed
 rollback reloads are retried. If a watchdog is interrupted, the next backend
 invocation recovers its expired trial.
 
+Confirmation state stays in sync across panels. Selecting the current value
+does not start a trial, and focusing another monitor remains available. A normal
+timeout or an already-finished preview is not shown as a red error.
+
 ### Keyboard Controls
 
 | Key | Action |

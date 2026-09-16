@@ -188,7 +188,7 @@ read_pending() {
 
 require_token() {
   [[ $1 =~ ^[a-f0-9]{32}$ ]] || die "invalid refresh token"
-  [[ $PENDING != null ]] || die "no refresh change is pending"
+  [[ $PENDING != null ]] || { echo "monitor-switcher: no display change is pending" >&2; exit 77; }
   [[ $(jq -r .token <<<"$PENDING") == "$1" ]] || die "refresh token does not match pending change"
 }
 
@@ -1101,8 +1101,11 @@ start_trial() { # <new-config> <output> <mode-or-arrangement>
 cmd_confirm() {
   require_token "$1"
   if rollback_required; then
-    restore_refresh "$1" >&2 || true
-    die "refresh expired or rollback already started; confirmation refused"
+    if restore_refresh "$1" >&2; then
+      echo "monitor-switcher: preview expired or reverted; previous settings restored; confirmation refused" >&2
+      exit 76
+    fi
+    die "rollback is still pending; confirmation refused; retry Revert"
   fi
   remove_file "$PENDING_FILE"
   PENDING=null
@@ -1133,8 +1136,8 @@ if rollback_required; then
 fi
 if [[ $PENDING != null ]]; then
   case ${1:-} in
-    state|confirm|revert) ;;
-    *) die "refresh change pending; confirm or revert its token before other commands" ;;
+    state|focus|confirm|revert) ;;
+    *) echo "monitor-switcher: display change pending; confirm or revert its token before other layout changes" >&2; exit 75 ;;
   esac
 fi
 

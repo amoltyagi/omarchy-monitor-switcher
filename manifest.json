@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "case.monitor-switcher",
   "name": "Monitor Switcher",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "author": "amoltyagi",
   "license": "MIT",
   "description": "Your displays. One place. A redesigned monitor panel with click-to-edit settings, power switches, drag-to-arrange and 20-second Keep/Revert.",

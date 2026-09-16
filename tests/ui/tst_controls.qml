@@ -88,6 +88,18 @@ Item {
       compare(settingSpy.count, 0)
     }
 
+    function test_selecting_current_value_does_not_create_a_confirmation() {
+      arrangement.visible = false
+      gallery.visible = true
+      wait(100)
+      var chip = findChild(gallery, "refresh-DP-2")
+      mouseClick(chip, chip.width / 2, chip.height / 2)
+      compare(gallery.editorIndex, 0)
+      gallery.applyEditor()
+      compare(settingSpy.count, 0)
+      compare(gallery.editorOutput, "")
+    }
+
     function test_power_switch_waits_for_live_state_and_blocks_duplicate_clicks() {
       arrangement.visible = false
       gallery.visible = true

@@ -36,6 +36,9 @@ local features.
 - `manageIpc: false` is paired with elected ownership in `PanelRegistry.js`.
   Every screen has a widget instance, even when the manifest disallows duplicate
   layout entries. Registration must survive hotplug and shell reload.
+- The registry also serializes panel actions and shares snapshots. Reads carry
+  generation/sequence tickets so stale results cannot erase a new confirmation.
+  Controls remain blocked between process exit and a fresh state read.
 - Omarchy 4.x nests popup content inside a holder directly below `BorderSurface`.
   A guarded local binding applies rounded corners to this panel's card only.
   Check this containment when updating `KeyboardPanel` integration.
