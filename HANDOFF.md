@@ -199,3 +199,26 @@ README, manifest, release notes, changelog, attribution/component documentation
 and screenshot provenance have been updated for 3.1.0. Branding is “Monitor
 Switcher” without a version suffix; the manifest/tag retain semantic versions.
 No external marketplace messages were sent as part of this publication task.
+
+## Publication complete
+
+All accumulated implementation, tests, documentation and replacement screenshot
+assets were committed and pushed to `origin/main` on September 16, 2026.
+Implementation/release commit: `37d19d1428d13c45b2e8480de7ee8bda155284cf`.
+Tag: `v3.1.0`.
+Release: https://github.com/amoltyagi/omarchy-monitor-switcher/releases/tag/v3.1.0
+Public title: **Monitor Switcher — Independent Night Light**.
+
+The release is published (not a draft) and all five screenshot/preview attachments
+were verified: preview.png, preview-detail.png, displays.png, night-light.png,
+arrangement.png. Release-body images use immutable URLs at the implementation
+commit. Main README embeds the replacement previews at their existing paths.
+Original Night Light preference bytes were verified restored. The user continued
+changing their active monitor selection during publication; no later selection
+was overridden by cleanup.
+
+Final release checks: plugin manifest validation, Bash/Python syntax, whitespace,
+24 model/registry/action tests, 9 Python tests and 11 QML results all passed.
+The installed backend is identical to the earlier frozen 71/71 passing backend
+run. Artwork was rendered and visually inspected before committing. This
+publication record is a documentation follow-up; it does not change released code.
