@@ -142,3 +142,44 @@ test('selecting the running setting is a no-op, but nearby fractional modes stil
   assert.equal(Model.settingIsCurrent(display, 'scale', '1.5'), false)
   assert.equal(Model.settingIsCurrent({ ...display, usable: false }, 'scale', '1.25'), false)
 })
+
+
+test('solid action labels select the higher-contrast black or white text', () => {
+  assert.equal(Model.contrastText({r: 0.49, g: 0.68, b: 0.64}), '#000000')
+  assert.equal(Model.contrastText({r: 0.12, g: 0.37, b: 0.65}), '#ffffff')
+  assert.equal(Model.contrastText({r: 0, g: 0, b: 0}), '#ffffff')
+  assert.equal(Model.contrastText({r: 1, g: 1, b: 1}), '#000000')
+})
+
+test('setting failures retain context, distinguish timeouts and bound diagnostics', () => {
+  assert.equal(Model.settingError('Text size', 0, 'done', false), '')
+  assert.match(Model.settingError('Brightness for DP-2', 1, 'DDC unavailable', false), /Brightness for DP-2 failed.*DDC unavailable/)
+  assert.match(Model.settingError('Text size', 124, '', false), /timed out/)
+  assert.match(Model.settingError('Text size', 137, '', false), /timed out/)
+  assert.match(Model.settingError('Text size', 0, '', true), /failed/)
+  assert.ok(Model.settingError('Text size', 1, 'x'.repeat(10000), false).length < 300)
+})
+
+test('setting commands preserve failures, stderr and literal arguments through the output cap', () => {
+  const {spawnSync} = require('node:child_process')
+  function run(command) { return spawnSync(command[0], command.slice(1), {encoding: 'utf8'}) }
+  const failure = run(Model.settingCommand('bash', ['-c', 'printf "unavailable" >&2; exit 7']))
+  assert.equal(failure.status, 7)
+  assert.equal(failure.stdout, 'unavailable')
+  const literal = 'DP-1; $(printf injected)'
+  const success = run(Model.settingCommand('printf', ['%s', literal]))
+  assert.equal(success.status, 0)
+  assert.equal(success.stdout, literal)
+  const timeout = run(Model.settingCommand('sleep', ['5'], 0.05))
+  assert.equal(timeout.status, 124)
+})
+
+
+test('gallery wraps before physical monitor illustrations crowd their controls', () => {
+  const monitors = [{physicalWidth: 590, physicalHeight: 330},
+    {physicalWidth: 890, physicalHeight: 390}, {physicalWidth: 600, physicalHeight: 340}]
+  for (const width of [456, 736, 1036]) {
+    const {boxes} = Model.galleryLayout(monitors, width, 22, 190, 230, 94, 160)
+    for (const box of boxes) assert.ok(box.height >= 160)
+  }
+})

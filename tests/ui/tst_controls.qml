@@ -8,10 +8,12 @@ Item {
   property var fixture: [
     {output: "DP-1", alias: "Main", num: 1, connected: true, enabled: true, usable: true,
       width: 1920, height: 1080, configuredWidth: 1920, configuredHeight: 1080, scale: 1,
+      nightLight: {enabled: false, active: false, available: true, temperature: 4000},
       physicalWidth: 600, physicalHeight: 340, x: 0, y: 0, refreshRate: 60,
       availableModes: [{width: 1920, height: 1080, rate: 60, mode: "1920x1080@60.00"}]},
     {output: "DP-2", alias: "Side", num: 2, connected: true, enabled: true, usable: true,
       width: 2560, height: 1440, configuredWidth: 2560, configuredHeight: 1440, scale: 1,
+      nightLight: {enabled: false, active: false, available: true, temperature: 4000},
       physicalWidth: 700, physicalHeight: 400, x: 1920, y: 0, refreshRate: 59.94,
       availableModes: [{width: 2560, height: 1440, rate: 59.94, mode: "2560x1440@59.94"},
         {width: 2560, height: 1440, rate: 120, mode: "2560x1440@120.00"}]}
@@ -27,6 +29,7 @@ Item {
     visible: false
   }
   SignalSpy { id: settingSpy; target: gallery; signalName: "settingRequested" }
+  SignalSpy { id: nightLightSpy; target: gallery; signalName: "nightLightRequested" }
   SignalSpy { id: powerSpy; target: gallery; signalName: "toggleRequested" }
 
   TestCase {
@@ -35,6 +38,9 @@ Item {
 
     function init() {
       gallery.closeEditor()
+      gallery.monitors = fixture
+      gallery.width = 800
+      gallery.y = 0
       gallery.busy = false
       gallery.pendingPowerOutput = ""
       gallery.visible = false
@@ -43,7 +49,79 @@ Item {
       arrangement.reset()
       settingSpy.clear()
       powerSpy.clear()
+      nightLightSpy.clear()
       wait(200)
+    }
+
+    function test_apply_is_distinct_and_only_submits_a_valid_draft() {
+      var apply = findChild(arrangement, "apply-arrangement")
+      verify(apply !== null)
+      compare(apply.primary, true)
+      compare(apply.width, arrangement.width)
+      verify(apply.height >= 42)
+      compare(apply.enabled, false)
+      arrangement.place("above")
+      compare(arrangement.problem, "")
+      compare(apply.enabled, true)
+      arrangement.busy = true
+      compare(apply.enabled, false)
+      arrangement.busy = false
+    }
+
+    function test_night_light_targets_its_own_display() {
+      arrangement.visible = false
+      gallery.visible = true
+      wait(100)
+      var chip = findChild(gallery, "nightlight-DP-2")
+      mouseClick(chip, chip.width / 2, chip.height / 2)
+      compare(gallery.editorOutput, "DP-2")
+      compare(gallery.editorField, "nightlight")
+      var popup = chip.popup
+      verify(popup.visible)
+      verify(findChild(gallery, "specifications-DP-2").visible,
+        "Night Light must leave the monitor specifications visible")
+      compare(popup.parent, chip)
+      verify(popup.y >= chip.height)
+      gallery.moveEditor(2)
+      gallery.applyEditor()
+      compare(nightLightSpy.count, 1)
+      compare(nightLightSpy.signalArguments[0][0], "DP-2")
+      compare(nightLightSpy.signalArguments[0][1], "4000")
+      compare(settingSpy.count, 0)
+    }
+
+    function test_controls_do_not_overlap_at_different_panel_widths() {
+      arrangement.visible = false
+      gallery.visible = true
+      gallery.monitors = [
+        Object.assign({}, fixture[0], {physicalWidth: 590, physicalHeight: 330, enabled: false}),
+        Object.assign({}, fixture[1], {physicalWidth: 890, physicalHeight: 390}),
+        Object.assign({}, fixture[0], {output: "HDMI-A-1", physicalWidth: 600, physicalHeight: 340, enabled: false})
+      ]
+      for (var w of [480, 760, 1060]) {
+        gallery.width = w
+        wait(50)
+        for (var m of gallery.monitors) {
+          var resolution = findChild(gallery, "resolution-group-" + m.output)
+          var row = findChild(gallery, "specification-row-" + m.output)
+          verify(resolution.y + resolution.height + 4 <= row.y,
+            "Status/resolution must not overlap refresh/scale at width " + w)
+        }
+      }
+    }
+
+    function test_night_light_opens_upward_near_window_bottom() {
+      arrangement.visible = false
+      gallery.visible = true
+      gallery.y = 200
+      gallery.openEditor(1, "nightlight")
+      wait(100)
+      var chip = findChild(gallery, "nightlight-DP-2")
+      verify(chip.popup.visible)
+      verify(chip.popup.y < 0, "Open above the toggle when there is no room below")
+      var point = chip.popup.contentItem.mapToItem(null, 0, 0)
+      verify(point.y >= 0)
+      verify(point.y + chip.popup.contentItem.height <= 650)
     }
 
     function test_drag_retains_pointer_and_updates_preview() {

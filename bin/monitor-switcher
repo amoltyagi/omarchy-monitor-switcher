@@ -31,6 +31,7 @@
 #   monitor-switcher confirm <token>     Keep the pending refresh change
 #   monitor-switcher revert <token>      Restore the previous config and layout
 #   monitor-switcher apply            Regenerate layout from config + reload
+#   monitor-switcher recover          Preview the saved working layout for this monitor set
 #
 #   <id> = output name (DP-3), alias (MSI), or number — the monitor's place
 #   in the pack order, left-to-right (toggle 2). Numbers need no aliases and
@@ -53,6 +54,7 @@ GENERATED_FILE="$TOGGLES_DIR/monitor-switcher.lua"
 PENDING_FILE="$STATE_DIR/refresh-pending.json"
 READY_FILE="$STATE_DIR/refresh-watchdog.json"
 LOCK_FILE="$STATE_DIR/lock"
+WORKING_FILE="$STATE_DIR/working-layouts.json"
 PENDING=null
 umask 077
 
@@ -183,6 +185,8 @@ read_pending() {
     and (.reverting == null or (.reverting | type == "boolean"))
     and (.config | type == "string")
     and (.generated == null or (.generated | type == "string"))
+    and (.state == null or (.state | type == "string"))
+    and (.expected == null or (.expected | type == "array"))
   ' <<<"$PENDING" > /dev/null || die "invalid pending refresh transaction; refusing changes"
 }
 
@@ -209,8 +213,17 @@ restore_refresh() { # Caller holds the lock. Keep the backup until reload succee
   else
     (jq -j .generated <<<"$PENDING" | write_file "$GENERATED_FILE") || failed=1
   fi
+  if jq -e 'has("state")' <<<"$PENDING" > /dev/null; then
+    (jq -j .state <<<"$PENDING" | write_file "$STATE_FILE") || failed=1
+  fi
   [[ $failed == 0 ]] || { echo "monitor-switcher: rollback could not restore both files; backup retained in $PENDING_FILE" >&2; return 1; }
   checked_reload || { echo "monitor-switcher: previous files restored, but rollback reload failed; rollback remains pending for retry" >&2; return 1; }
+  local expected
+  expected=$(jq -c '.expected // []' <<<"$PENDING")
+  if [[ $expected != '[]' ]] && ! verify_restored "$expected"; then
+    echo "monitor-switcher: previous settings have not reached the displays; rollback remains pending for retry" >&2
+    return 1
+  fi
   remove_file "$PENDING_FILE" || return 1
   PENDING=null
   echo "refresh reverted; previous config and generated layout restored"
@@ -354,6 +367,9 @@ seed_config() {
   lv=$(live) || return 1
   seeded=$(adopt_new "$(jq 'sort_by(.x)' <<<"$lv")" <<< '[]') || die "could not seed config from live state"
   seeded=$(backfill_geometry "$seeded" "$lv") || return 1
+  # First-run adoption preserves the desk, including offsets and vertical stacks.
+  seeded=$(jq --argjson lv "$lv" 'map(. as $c | ([$lv[] | select(.name == $c.output)][0]) as $m
+    | if $m.disabled != true and $m.width > 0 and $m.height > 0 then .position = "\($m.x // 0)x\($m.y // 0)" else . end)' <<<"$seeded")
   # Build-then-write: the layout is fully derived before write_file stages it.
   [[ -n $seeded ]] || die "could not seed config from live state"
   printf '%s\n' "$seeded" | write_file "$CONFIG_FILE"
@@ -507,6 +523,61 @@ find_overlap() { # <boxes-json>
          | join("; ")' <<<"$1"
 }
 
+# Re-enabling an output may find its saved slot occupied after an arrangement.
+# Reopen horizontal slots by shifting right-hand desktops; otherwise keep
+# active desktops fixed and use the nearest free touching edge. All geometry
+# uses logical sizes, including scale and rotation.
+place_returning_display() { # <output> <live-json>
+  local cfg boxes placed inserted
+  cfg=$(backfill_geometry "$(read_config)" "$2")
+  boxes=$(layout_boxes "$cfg" "$2")
+  # For a horizontal row, reopen the saved slot by shifting the right-hand
+  # displays together. This restores 1–2–3 after the user joined 1 and 3.
+  inserted=$(jq --arg o "$1" '
+    def overlaps($a; $b): $a.x < $b.x+$b.w and $b.x < $a.x+$a.w and $a.y < $b.y+$b.h and $b.y < $a.y+$a.h;
+    . as $all | ([.[] | select(.output == $o)][0]) as $m
+    | [.[] | select(.output != $o)] as $others
+    | if $m != null and any($others[]; overlaps(.; $m))
+        and (map(.y) | max) < (map(.y + .h) | min)
+      then ([$others[] | select(.x < $m.x) | .x + .w] + [$m.x] | max) as $x
+        | map(if .output == $o then .x = $x
+              elif .x >= $x then .x += $m.w else . end)
+      else null end' <<<"$boxes") || return 1
+  if [[ $inserted != null && -z $(find_overlap "$inserted") ]]; then
+    cfg=$(jq --argjson boxes "$inserted" 'map(. as $c |
+      ([$boxes[] | select(.output == $c.output)][0] // null) as $b |
+      if $b != null then .position = "\($b.x)x\($b.y)" else . end)' <<<"$cfg") || return 1
+    printf "%s\n" "$cfg" | write_file "$CONFIG_FILE"
+    return
+  fi
+  placed=$(jq --arg o "$1" '
+    def overlaps($a; $b):
+      $a.x < $b.x + $b.w and $b.x < $a.x + $a.w and
+      $a.y < $b.y + $b.h and $b.y < $a.y + $a.h;
+    ([.[] | select(.output == $o)][0]) as $m
+    | [.[] | select(.output != $o)] as $others
+    | if $m == null or (any($others[]; overlaps(.; $m)) | not) then null
+      else
+        [$others[] as $a |
+          ([$a.y, $a.y + $a.h - $m.h,
+             ([$a.y - $m.h + 1, ([$m.y, $a.y + $a.h - 1] | min)] | max)][] as $y |
+            $m + {x: ($a.x + $a.w), y: $y}, $m + {x: ($a.x - $m.w), y: $y}),
+          ([$a.x, $a.x + $a.w - $m.w,
+             ([$a.x - $m.w + 1, ([$m.x, $a.x + $a.w - 1] | min)] | max)][] as $x |
+            $m + {x: $x, y: ($a.y + $a.h)}, $m + {x: $x, y: ($a.y - $m.h)})]
+        | map(. as $candidate | select(all($others[]; overlaps(.; $candidate) | not)))
+        | sort_by((.x - $m.x)*(.x - $m.x) + (.y - $m.y)*(.y - $m.y), .y, .x)
+        | .[0] // error("no free edge for returning display")
+      end' <<<"$boxes") || return 1
+  [[ $placed != null ]] || return 0
+  # Pin the resolved boxes so an unpinned successor cannot follow the moved output.
+  cfg=$(jq --argjson boxes "$boxes" --argjson placed "$placed" '
+    map(. as $c | ([$boxes[] | select(.output == $c.output)][0] // null) as $b
+      | if .output == $placed.output then .position = "\($placed.x)x\($placed.y)"
+        elif $b != null then .position = "\($b.x)x\($b.y)" else . end)' <<<"$cfg") || return 1
+  printf "%s\n" "$cfg" | write_file "$CONFIG_FILE"
+}
+
 # Resolve preferred against trusted geometry, preserving a running advertised
 # rate when possible. Never calculate one resolution and ask Hyprland for another.
 resolved_mode() { # <config-entry> <live-entry>
@@ -542,6 +613,71 @@ verify_layout() { # <expected-json>, bounded by the caller.
     else settled=0; fi
     sleep 0.2
   done
+}
+
+# Recovery records are keyed by the connected hardware set, independent of
+# connector renumbering. Only successful application/confirmation creates one.
+working_key() {
+  jq -cn --argjson cfg "$1" --argjson lv "$2" '
+    [$lv[] | select(.name != "FALLBACK") | .name as $name
+      | ([$cfg[] | select(.output == $name)][0]) as $c
+      | if $c.identity != null then {identity: $c.identity} else {output: $name} end]
+    | sort_by(tojson) | tojson'
+}
+
+read_working() {
+  if [[ ! -e $WORKING_FILE && ! -L $WORKING_FILE ]]; then echo '[]'; return; fi
+  local value
+  value=$(read_json "$WORKING_FILE") || return 1
+  jq -e 'type == "array" and length <= 8 and all(.[];
+    (.key | type == "string") and (.config | type == "string")
+    and (.state | type == "string") and (.expected | type == "array"))' <<<"$value" > /dev/null || return 1
+  printf '%s\n' "$value"
+}
+
+expected_live() {
+  jq -c '[.[] | select(.name != "FALLBACK")
+    | if .disabled == true then {output: .name, disabled: true}
+      elif .width > 0 and .height > 0 then {output: .name, disabled: false,
+        width, height, scale, transform: (.transform // 0), x, y, rate: .refreshRate}
+      else empty end]' <<<"$1"
+}
+
+verify_restored() {
+  local expected=$1 lv
+  lv=$(live) || return 1
+  # A physically disconnected display cannot be restored. Verify every survivor
+  # and require at least one usable screen, rather than deadlocking recovery.
+  expected=$(jq -c --argjson lv "$lv" '[.[] | .output as $o | select(any($lv[]; .name == $o))]' <<<"$expected")
+  jq -e 'any(.[]; .disabled != true)' <<<"$expected" > /dev/null || return 1
+  timeout -k 1 6 bash -o pipefail -c "$(declare -f verify_layout); verify_layout \"\$@\"" _ "$expected"
+}
+
+save_working() {
+  local expected=$1 cfg st lv key history record
+  cfg=$(safe_read "$CONFIG_FILE") || return 1
+  st=$(read_state) || return 1
+  lv=$(live) || return 1
+  key=$(working_key "$cfg" "$lv") || return 1
+  history=$(read_working) || return 1
+  record=$(jq -n --argjson key "$key" --arg cfg "$cfg" --arg st "$st" --argjson expected "$expected" \
+    '{key: $key, config: $cfg, state: $st, expected: $expected}') || return 1
+  jq --argjson record "$record" '[$record] + [.[] | select(.key != $record.key)] | .[:8]' <<<"$history" | write_file "$WORKING_FILE"
+}
+
+cmd_recover() {
+  local lv cfg key history record output
+  lv=$(prepare)
+  cfg=$(read_config)
+  key=$(working_key "$cfg" "$lv")
+  history=$(read_working) || die "cannot read saved working layouts"
+  record=$(jq -c --argjson key "$key" '[.[] | select(.key == $key)][0] // empty' <<<"$history")
+  [[ -n $record ]] || die "no verified layout has been saved for these connected monitors yet"
+  cfg=$(jq -r .config <<<"$record")
+  validate_config "$cfg"
+  jq -e '.state | fromjson | type == "object" and (.disabled | type == "array" and all(.[]; type == "string"))' <<<"$record" > /dev/null || die "invalid saved recovery state"
+  output=$(jq -r '[.[] | select(.focused == true)][0].name // .[0].name' <<<"$lv")
+  start_trial "$cfg" "$output" recovery "$(jq -r .state <<<"$record")"
 }
 
 # Regenerate the layout file from config + state and reload Hyprland.
@@ -607,11 +743,14 @@ apply() {
 
   if [[ ${1:-} == refresh ]]; then
     # Validation/generation time must not consume the user's confirmation window.
-    PENDING=$(jq --argjson expires "$(( $(date +%s) + 20 ))" '.expiresAt = $expires' <<<"$PENDING")
+    PENDING=$(jq --argjson expected "$expected" --argjson expires "$(( $(date +%s) + 20 ))" '.expiresAt = $expires | .appliedExpected = $expected' <<<"$PENDING")
     printf '%s\n' "$PENDING" | write_file "$PENDING_FILE"
   fi
   if checked_reload; then
     if timeout -k 1 6 bash -o pipefail -c "$(declare -f verify_layout); verify_layout \"\$@\"" _ "$expected"; then
+      if [[ ${1:-} != refresh ]]; then
+        (save_working "$expected") || echo "monitor-switcher: layout applied, but its recovery snapshot could not be saved" >&2
+      fi
       return 0
     fi
     echo "monitor-switcher: applied layout verification failed (mode, scale, position or power did not match)" >&2
@@ -760,8 +899,9 @@ cmd_toggle() { # <id> <on|off|toggle>
   jq -e --arg o "$output" 'any(.[]; .name == $o)' <<<"$lv" > /dev/null \
     || die "$output is not connected"
 
-  local currently next backup
+  local currently next backup config_backup
   backup=$(read_state)
+  config_backup=$(read_config)
   if jq -e --arg o "$output" 'any(.[]; .name == $o and .disabled != true)' <<<"$lv" > /dev/null; then currently=on; else currently=off; fi
   case $action in
     toggle) [[ $currently == on ]] && next=off || next=on ;;
@@ -785,10 +925,16 @@ cmd_toggle() { # <id> <on|off|toggle>
 
   if [[ $next == off ]]; then set_disabled "$output" true; else set_disabled "$output" false; fi
   # Subshell: die inside apply exits the subshell, not us — rollback runs.
-  if ! (apply); then
+  if ! (
+    if [[ $next == on && $currently == off ]]; then
+      place_returning_display "$output" "$lv" || exit 1
+    fi
+    apply
+  ); then
     # apply refused the layout (its message says why): state.json must not
     # claim a change that never happened — roll the flag back.
     printf '%s\n' "$backup" | write_file "$STATE_FILE"
+    printf "%s\n" "$config_backup" | write_file "$CONFIG_FILE"
     die "toggle failed; state left unchanged"
   fi
 
@@ -1071,7 +1217,9 @@ cmd_arrange() { # All active displays move together; no intermediate overlaps.
 }
 
 start_trial() { # <new-config> <output> <mode-or-arrangement>
-  local newcfg=$1 output=$2 mode=$3 token generated backup
+  local newcfg=$1 output=$2 mode=$3 newstate=${4:-} token generated backup previous_state expected
+  previous_state=$(read_state)
+  expected=$(expected_live "$(live)")
 
   guard_path "$GENERATED_FILE" || die "refusing unsafe generated layout path"
   generated=null
@@ -1083,7 +1231,8 @@ start_trial() { # <new-config> <output> <mode-or-arrangement>
   [[ $token =~ ^[a-f0-9]{32}$ ]] || die "could not generate refresh token"
   PENDING=$(jq -n --arg token "$token" --arg output "$output" --arg mode "$mode" \
     --argjson expires "$(( $(date +%s) + 20 ))" --argjson config "$backup" --argjson generated "$generated" \
-    '{token: $token, output: $output, mode: $mode, expiresAt: $expires, config: $config, generated: $generated}')
+    --arg state "$previous_state" --argjson expected "$expected" \
+    '{token: $token, output: $output, mode: $mode, expiresAt: $expires, config: $config, generated: $generated, state: $state, expected: $expected}')
   (( $(LC_ALL=C printf '%s\n' "$PENDING" | wc -c) <= MAX_FILE_BYTES )) || die "refresh backup is too large"
   printf '%s\n' "$PENDING" | write_file "$PENDING_FILE"
   trap 'refresh_exit $?' EXIT
@@ -1092,6 +1241,7 @@ start_trial() { # <new-config> <output> <mode-or-arrangement>
   trap 'exit 143' TERM
   launch_watchdog "$token"
   printf '%s\n' "$newcfg" | write_file "$CONFIG_FILE"
+  if [[ -n $newstate ]]; then printf '%s\n' "$newstate" | write_file "$STATE_FILE"; fi
   # apply verifies all affected modes, scales, transforms, positions and power.
   apply refresh
   trap - EXIT HUP INT TERM
@@ -1107,6 +1257,11 @@ cmd_confirm() {
     fi
     die "rollback is still pending; confirmation refused; retry Revert"
   fi
+  local expected
+  expected=$(jq -c ".appliedExpected // []" <<<"$PENDING")
+  [[ $expected != "[]" ]] || expected=$(expected_live "$(live)")
+  verify_restored "$expected" || die "display state changed during the preview; use Revert"
+  (save_working "$expected") || die "cannot save the verified layout; confirmation retained, retry Keep or Revert"
   remove_file "$PENDING_FILE"
   PENDING=null
   echo "refresh confirmed; saved mode kept"
@@ -1160,6 +1315,7 @@ case "${1:-}" in
   refresh) [[ $# -eq 3 ]] || usage; cmd_refresh "$2" "$3" ;;
   confirm) [[ $# -eq 2 ]] || usage; cmd_confirm "$2" ;;
   revert)  [[ $# -eq 2 ]] || usage; restore_refresh "$2" ;;
+  recover) cmd_recover ;;
   apply)   apply ;;
   *)       usage ;;
 esac

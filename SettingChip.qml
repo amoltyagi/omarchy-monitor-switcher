@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls as Controls
 import qs.Commons
+import "Model.js" as Model
 
 // A setting should look editable before hover, not like a plain specification.
 Rectangle {
@@ -17,15 +18,17 @@ Rectangle {
   property color foreground: Color.foreground
   signal clicked()
   signal hovered(bool isHovered)
+  readonly property color labelColor: primary ? Model.contrastText(Color.accent) : foreground
   readonly property bool hot: pointer.containsMouse || activeFocus || hasCursor
 
   implicitWidth: label.implicitWidth + (chevron && enabled ? Style.space(16) : 0) + horizontalPadding * 2
   implicitHeight: Math.max(Style.space(27), label.implicitHeight + Style.space(10))
   radius: Style.space(8)
-  color: primary ? Util.alpha(Color.accent, hot ? 0.32 : 0.2)
+  color: primary ? Color.accent
     : Util.alpha(foreground, hot ? 0.14 : selected ? 0.1 : 0.055)
-  border.width: 1
-  border.color: hot || selected ? Util.alpha(Color.accent, 0.7) : Util.alpha(foreground, 0.13)
+  border.width: hot && primary ? 2 : 1
+  border.color: primary ? (hot ? labelColor : Color.accent)
+    : hot || selected ? Util.alpha(Color.accent, 0.7) : Util.alpha(foreground, 0.22)
   opacity: enabled ? 1 : 0.6
   activeFocusOnTab: true
   Accessible.role: Accessible.Button
@@ -47,7 +50,7 @@ Rectangle {
     text: chip.text
     textFormat: Text.PlainText
     elide: Text.ElideRight
-    color: chip.foreground
+    color: chip.labelColor
     font.family: chip.fontFamily
     font.pixelSize: chip.fontSize
     font.weight: chip.selected || chip.primary ? Font.DemiBold : Font.Medium
@@ -61,7 +64,7 @@ Rectangle {
     text: chip.selected ? "⌃" : "⌄"
     font.family: chip.fontFamily
     font.pixelSize: chip.fontSize
-    color: Util.alpha(chip.foreground, chip.hot ? 0.95 : 0.55)
+    color: Util.alpha(chip.labelColor, chip.hot ? 1 : 0.8)
   }
   MouseArea {
     id: pointer

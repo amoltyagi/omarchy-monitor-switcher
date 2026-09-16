@@ -20,14 +20,16 @@ local features.
 |---|---|
 | `Panel.qml` | Popup, one backend snapshot, action processes, brightness/text size, keyboard help |
 | `PanelRegistry.js` | Elect one IPC owner across per-screen instances; route to focused screen |
-| `DisplayGallery.qml` | Physical monitor illustrations, per-card editors and trial confirmation |
+| `DisplayGallery.qml` | Adaptive physical monitor gallery, toggle-anchored Night Light and trial confirmation |
 | `SettingChip.qml` | Rounded, visibly editable setting/button with hover and keyboard feedback |
 | `MonitorPowerToggle.qml` | Below-monitor power switch and pending feedback |
 | `ArrangementEditor.qml` | Draft desktop layout, dragging, snap preview and relative placement |
 | `Model.js` | Pure scale/mode, physical geometry and arrangement helpers |
 | `DragSlider.qml` | Wheel-safe brightness/text-size sliders |
 | `MonitorLogo.qml` | Theme-tinted vector identity |
-| `bin/monitor-switcher` | Persistent config/state, validation, verified actions and rollback watchdog |
+| `bin/monitor-switcher` | Persistent config/state, collision-free returning monitors, verified actions and rollback |
+| `bin/monitor-nightlight.py` | Per-output gamma controls, saved temperature preferences and hotplug replay |
+| `bin/monitor-action` | Detached display changes that survive their originating panel |
 
 ## Integration details
 
@@ -51,6 +53,14 @@ local features.
   being interpolated into shell code.
 - Panel resolution, refresh, scale and arrangement edits use the independent
   Keep/Revert watchdog. Ordinary CLI layout commands verify application too.
+
+- `bin/monitor-nightlight.py` owns only selected outputs' gamma controls. It runs
+  once through the registry IPC owner, releases gamma on exit and replays saved
+  preferences after hotplug. Keep global hyprsunset controls separate.
+- `bin/monitor-action` runs layout actions in an independent session so removing
+  the initiating panel cannot interrupt persistence or rollback.
+- Verified layouts are bounded to eight connected monitor sets; recovery uses
+  the existing confirmation protocol and verifies rollback on live survivors.
 
 ## Updating after Omarchy changes
 

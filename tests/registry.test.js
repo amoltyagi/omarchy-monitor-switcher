@@ -11,6 +11,8 @@ function fixture() {
   function panel(screenName) {
     const p = { screenName, opened: false, reads: 0, stateError: '',
       refresh() { this.reads++ },
+      acceptNightLight(state) { this.nightLight = state },
+      writeNightLight(output, value) { this.request = {output, value} },
       acceptSnapshot(state) { this.state = state; this.stateError = '' } }
     registry.register(p)
     return p
@@ -109,4 +111,19 @@ test('reopening synchronizes external changes before cached controls can run', (
   r.publishSnapshot({ refreshPending: { token: 'external' }, monitors: [] }, r.startRead())
   assert.equal(lg.state.refreshPending.token, 'external')
   assert.equal(lg.sharedActionRunning, false)
+})
+
+
+test('night light routes to one owner and publishes independent monitor state to every panel', () => {
+  const {registry: r, panel} = fixture()
+  const a = panel('DP-1'), b = panel('DP-2')
+  r.setNightLight('DP-2', '4000')
+  assert.deepEqual(a.request, {output: 'DP-2', value: '4000'})
+  assert.equal(b.request, undefined)
+  assert.equal(b.nightLightBusy, true)
+  const state = {ready: true, monitors: {'DP-2': {active: true, temperature: 4000}}}
+  r.publishNightLight(state)
+  assert.equal(a.nightLight, state)
+  assert.equal(b.nightLight, state)
+  assert.equal(b.nightLightBusy, false)
 })

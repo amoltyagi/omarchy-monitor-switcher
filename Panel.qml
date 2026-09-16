@@ -28,12 +28,21 @@ Panel {
   property string focusedMonitor: ""
   property int enabledDisplayCount: 0
   readonly property var focusedMeta: switcherMeta[focusedMonitor] || ({})
-  readonly property var galleryMonitors: displays.filter(function(m) { return m.connected })
+  property var nightLightStates: ({})
+  property bool nightLightReady: false
+  property bool nightLightBusy: false
+  property string nightLightError: ""
+  readonly property var galleryMonitors: displays.filter(function(m) { return m.connected }).map(function(m) {
+    return Object.assign({}, m, {nightLight: root.nightLightStates[m.output] || ({enabled: false, active: false, available: false, temperature: 4000})})
+  })
   property var refreshPending: null
   property double refreshClock: Date.now() / 1000
   readonly property int refreshSeconds: refreshPending ? Math.max(0, Math.ceil(refreshPending.expiresAt - refreshClock)) : 0
   property string stateError: ""
   property string actionError: ""
+  property string brightnessError: ""
+  property string textSizeError: ""
+  readonly property string visibleError: [stateError, actionError, brightnessError, textSizeError, nightLightError].filter(function(message) { return message !== "" }).join("\n")
   property string actionVerb: ""
   property string actionTarget: ""
   property string actionNotice: ""
@@ -96,6 +105,22 @@ Panel {
     refreshBrightness()
   }
 
+  function acceptNightLight(state) {
+    nightLightReady = state.ready === true
+    nightLightStates = state.monitors || ({})
+    var errors = Object.keys(nightLightStates).filter(function(name) { return nightLightStates[name].error })
+      .map(function(name) { return name + ": " + nightLightStates[name].error })
+    nightLightError = [state.error || ""].concat(errors).filter(function(message) { return message }).join("\n")
+  }
+
+  function writeNightLight(output, value) {
+    if (!nightLightProc.running || !nightLightReady) {
+      PanelRegistry.publishNightLight({ready: false, monitors: nightLightStates, error: "Night Light is unavailable. Reopen the panel to retry."})
+      return
+    }
+    nightLightProc.write(JSON.stringify({output: output, value: value}) + "\n")
+  }
+
   function refreshBrightness() {
     if (!focusedMonitor || !focusedMeta.usable || brightnessProc.running || setBrightnessProc.running || brightnessDebounce.running) return
     brightnessReadTarget = focusedMonitor
@@ -116,9 +141,10 @@ Panel {
     actionTarget = output
     reopenAfterAction = opened && verb !== "focus"
     // argv carries all user/output values; none are interpolated into shell code.
-    actionProc.command = ["bash", "-o", "pipefail", "-c",
-      "\"$1\" \"$2\" \"$3\" ${4:+\"$4\"} 2>&1 | head -c 65536",
-      "monitor-switcher", scriptPath, verb, output, value || ""]
+    actionProc.command = ["bash", Qt.resolvedUrl("bin/monitor-action").toString().replace(/^file:\/\//, ""),
+      verb, output, value || ""]
+    // Keep optional arguments absent, rather than forwarding an empty fourth argument.
+    if (!value) actionProc.command = actionProc.command.slice(0, -1)
     if (verb === "focus") close()
     actionProc.running = true
   }
@@ -138,9 +164,8 @@ Panel {
     if (setBrightnessProc.running) { brightnessSetQueued = true; return }
     brightnessSetQueued = false
     brightnessWriteTarget = focusedMonitor
-    setBrightnessProc.command = ["bash", "-c",
-      "omarchy-brightness-display --no-osd --monitor \"$1\" \"$2\" | head -c 65536",
-      "monitor-switcher", brightnessWriteTarget, percent + "%"]
+    setBrightnessProc.command = Model.settingCommand("omarchy-brightness-display",
+      ["--no-osd", "--monitor", brightnessWriteTarget, percent + "%"])
     setBrightnessProc.running = true
   }
 
@@ -156,8 +181,8 @@ Panel {
     textSizePreviewIndex = Math.max(0, Math.min(textSizeStops.length - 1, index))
     reflowingText = true
     reflowSettle.restart()
-    textScaleProc.command = ["bash", "-c", "omarchy-display-text-size \"$1\" | head -c 65536",
-      "monitor-switcher", String(textSizeStops[textSizePreviewIndex])]
+    textScaleProc.command = Model.settingCommand("omarchy-display-text-size",
+      [String(textSizeStops[textSizePreviewIndex])])
     textScaleProc.running = true
   }
 
@@ -213,6 +238,7 @@ Panel {
     if (text === "m") gallery.openEditor(selectedIndex, "mode")
     else if (text === "r") gallery.openEditor(selectedIndex, "refresh")
     else if (text === "s") gallery.openEditor(selectedIndex, "scale")
+    else if (text === "t") gallery.openEditor(selectedIndex, "nightlight")
     else if (text === "p") {
       var m = galleryMonitors[selectedIndex]
       if (m) toggleDisplay(m.output, m.enabled)
@@ -240,6 +266,8 @@ Panel {
     return JSON.stringify({brightness: brightnessPercent, brightnessAvailable: brightnessAvailable,
       focusedMonitor: focusedMonitor, scale: focusedMeta.scale, refreshRate: focusedMeta.refreshRate,
       refreshPending: refreshPending, actionError: actionError, actionNotice: actionNotice,
+      brightnessError: brightnessError, textSizeError: textSizeError,
+      nightLight: nightLightStates, nightLightError: nightLightError, nightLightReady: nightLightReady,
       actionRunning: sharedActionRunning, stateError: stateError, displays: displays,
       ui: {arranging: arranging, focusSection: focusSection, selectedIndex: selectedIndex,
         popup: {screen: screenName, x: panel.cardOrigin.x, y: panel.cardOrigin.y, width: panel.contentWidth, height: panel.contentHeight},
@@ -277,11 +305,26 @@ Panel {
   }
   onOpenedChanged: {
     if (opened) {
+      if (root.ipcOwner && !nightLightProc.running) nightLightProc.running = true
       PanelRegistry.synchronize()
       focusSection = refreshPending ? "confirmation" : arranging ? "arrangement" : galleryMonitors.length ? "monitors" : "textsize"
       selectedIndex = refreshPending ? 0 : Math.max(0, galleryMonitors.findIndex(function(m) { return m.output === root.focusedMonitor }))
       cursorActive = false
     } else { gallery.closeEditor(); shortcutsExpanded = false }
+  }
+
+  Process {
+    id: nightLightProc
+    command: ["python3", Qt.resolvedUrl("bin/monitor-nightlight.py").toString().replace(/^file:\/\//, "")]
+    running: root.ipcOwner
+    stdinEnabled: true
+    stdout: SplitParser {
+      onRead: function(data) {
+        try { PanelRegistry.publishNightLight(JSON.parse(data)) }
+        catch (error) { PanelRegistry.publishNightLight({ready: false, monitors: {}, error: "Could not read Night Light state."}) }
+      }
+    }
+    onExited: if (root.ipcOwner) PanelRegistry.publishNightLight({ready: false, monitors: {}, error: "Night Light stopped. Reopen the panel to retry."})
   }
 
   Process {
@@ -333,16 +376,25 @@ Panel {
   }
   Process {
     id: setBrightnessProc
-    stdout: StdioCollector { waitForEnd: true }
-    onExited: {
-      if (root.brightnessSetQueued && root.pendingBrightnessTarget === root.focusedMonitor)
+    stdout: StdioCollector { id: brightnessWriteOutput; waitForEnd: true }
+    onExited: function(exitCode, exitStatus) {
+      root.brightnessError = Model.settingError("Brightness for " + root.brightnessWriteTarget,
+        exitCode, brightnessWriteOutput.text, exitStatus !== 0)
+      if (root.brightnessSetQueued && root.pendingBrightnessTarget === root.focusedMonitor) {
         root.setBrightness(root.pendingBrightnessPercent)
+      } else {
+        root.brightnessSetQueued = false
+        root.refreshBrightness()
+      }
     }
   }
   Process {
     id: textScaleProc
-    stdout: StdioCollector { waitForEnd: true }
-    onExited: root.textSizePreviewIndex = -1
+    stdout: StdioCollector { id: textSizeOutput; waitForEnd: true }
+    onExited: function(exitCode, exitStatus) {
+      root.textSizeError = Model.settingError("Text size", exitCode, textSizeOutput.text, exitStatus !== 0)
+      root.textSizePreviewIndex = -1
+    }
   }
   Timer { id: reopenTimer; interval: 600; onTriggered: root.open() }
   Timer { id: brightnessDebounce; interval: 180; onTriggered: root.setBrightness(root.brightnessPercent) }
@@ -387,7 +439,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     borderSpec: Border.flat(Util.alpha(Color.foreground, 0.18), 1)
-    contentWidth: panel.fittedContentWidth(Style.space(820))
+    contentWidth: panel.fittedContentWidth(Style.space(1160))
     contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(root.shortcutsExpanded ? 820 : 600))
 
     PanelKeyCatcher {
@@ -457,7 +509,7 @@ Panel {
               anchors.rightMargin: Style.space(14)
               anchors.verticalCenter: parent.verticalCenter
               text: root.stateError ? "Unavailable" : root.enabledDisplayCount + " active"
-              color: Util.alpha(root.bar.foreground, 0.55)
+              color: Util.alpha(root.bar.foreground, 0.88)
               font.family: root.uiFontFamily
               font.pixelSize: Style.font.caption
             }
@@ -479,15 +531,15 @@ Panel {
             width: parent.width
             text: root.arranging ? "Match your desktop to the displays on your desk."
               : "Click a setting to edit. Click a display to focus."
-            color: Util.alpha(root.bar.foreground, 0.6)
+            color: Util.alpha(root.bar.foreground, 0.88)
             font.family: root.uiFontFamily
             font.pixelSize: Style.font.caption
           }
 
           Text {
             width: parent.width
-            visible: root.stateError !== "" || root.actionError !== ""
-            text: root.stateError || root.actionError
+            visible: root.visibleError !== ""
+            text: root.visibleError
             textFormat: Text.PlainText
             wrapMode: Text.WrapAnywhere
             color: Color.urgent
@@ -496,10 +548,10 @@ Panel {
           }
 
           SettingChip {
-            visible: root.actionError !== "" && root.stateError === ""
+            visible: root.actionError !== "" || root.brightnessError !== "" || root.textSizeError !== "" || root.nightLightError !== ""
             text: "Dismiss"
             chevron: false
-            onClicked: root.actionError = ""
+            onClicked: { root.actionError = ""; root.brightnessError = ""; root.textSizeError = ""; root.nightLightError = "" }
           }
 
           Text {
@@ -507,9 +559,18 @@ Panel {
             visible: root.actionNotice !== ""
             text: root.actionNotice
             wrapMode: Text.WordWrap
-            color: Util.alpha(root.bar.foreground, 0.7)
+            color: Util.alpha(root.bar.foreground, 0.88)
             font.family: root.uiFontFamily
             font.pixelSize: Style.font.caption
+          }
+
+          SettingChip {
+            visible: root.shortcutsExpanded || root.actionError !== ""
+            text: "Restore working layout…"
+            chevron: false
+            enabled: !root.layoutBusy && root.stateError === ""
+            tooltipText: "Preview the last verified layout saved for these connected monitors"
+            onClicked: root.runAction("recover", "", "")
           }
 
           DisplayGallery {
@@ -520,7 +581,7 @@ Panel {
             focusedMonitor: root.focusedMonitor
             foreground: root.bar.foreground
             fontFamily: root.uiFontFamily
-            busy: root.layoutBusy
+            busy: root.layoutBusy || root.nightLightBusy
             focusBlocked: root.sharedActionRunning
             stale: root.stateError !== ""
             enabledCount: root.enabledDisplayCount
@@ -532,6 +593,7 @@ Panel {
             cursorIndex: root.cursorActive && root.focusSection === "monitors" ? root.selectedIndex : -1
             onToggleRequested: function(output, currentlyEnabled) { root.toggleDisplay(output, currentlyEnabled) }
             onFocusRequested: function(output) { root.runAction("focus", output, "") }
+            onNightLightRequested: function(output, value) { PanelRegistry.setNightLight(output, value) }
             onSettingRequested: function(verb, output, value) { root.runAction(verb, output, value) }
             onConfirmRequested: function(keep) { if (root.refreshPending) root.runAction(keep ? "confirm" : "revert", root.refreshPending.token, "") }
             onCursorRequested: function(index) {
@@ -573,7 +635,7 @@ Panel {
               Text {
                 anchors.right: parent.right
                 text: root.brightnessPercent + "%"
-                color: Util.alpha(root.bar.foreground, 0.65)
+                color: Util.alpha(root.bar.foreground, 0.88)
                 font.family: root.uiFontFamily
                 font.pixelSize: Style.font.caption
               }
@@ -621,7 +683,7 @@ Panel {
               Text {
                 anchors.right: parent.right
                 text: (root.textSizePreviewIndex >= 0 ? root.textSizeStops[root.textSizePreviewIndex] : Style.font.baseSize) + "px"
-                color: Util.alpha(root.bar.foreground, 0.65)
+                color: Util.alpha(root.bar.foreground, 0.88)
                 font.family: root.uiFontFamily
                 font.pixelSize: Style.font.caption
               }
@@ -663,7 +725,7 @@ Panel {
               anchors.rightMargin: Style.space(12)
               anchors.verticalCenter: parent.verticalCenter
               text: "Keyboard shortcut: Super + Shift + Ctrl + 1…" + Math.max(1, root.displays.length)
-              color: Util.alpha(root.bar.foreground, 0.65)
+              color: Util.alpha(root.bar.foreground, 0.88)
               font.family: root.uiFontFamily
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
@@ -703,6 +765,7 @@ Panel {
                   ["← / → or H / L", "Select an option or adjust a slider"],
                   ["Enter / Space", "Focus a display or apply the selected option"],
                   ["M / R / S", "Open resolution / refresh rate / scaling settings"],
+                  ["T", "Open Night Light temperature for this display"],
                   ["P", "Turn the selected display on or off"],
                   ["A", "Open display arrangement"],
                   ["Esc", "Close settings, then close the panel"]

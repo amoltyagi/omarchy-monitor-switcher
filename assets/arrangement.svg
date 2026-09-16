@@ -1,29 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1800" height="1120" viewBox="0 0 1800 1120">
-  <defs>
-    <linearGradient id="backdrop" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#f7f9fb"/><stop offset="1" stop-color="#e7edf1"/>
-    </linearGradient>
-    <radialGradient id="glow">
-      <stop stop-color="#ffffff"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
-      <feDropShadow dx="0" dy="24" stdDeviation="25" flood-color="#203344" flood-opacity=".16"/>
-    </filter>
-  </defs>
-  <rect width="1800" height="1120" fill="url(#backdrop)"/>
-  <ellipse cx="1250" cy="480" rx="760" ry="550" fill="url(#glow)"/>
-  <g font-family="Liberation Sans, Arial, sans-serif">
-    <text x="100" y="122" font-size="21" font-weight="700" letter-spacing="3" fill="#61798a">MONITOR SWITCHER 3</text>
-    <text x="96" y="270" font-size="86" font-weight="700" letter-spacing="-3.5" fill="#1b2835">A place for</text>
-    <text x="96" y="362" font-size="86" font-weight="700" letter-spacing="-3.5" fill="#1b2835">every display.</text>
-    <text x="100" y="432" font-size="26" fill="#687e8c">Meet the new arrangement view.</text>
-    <g font-size="25" fill="#405866">
-      <circle cx="108" cy="535" r="4" fill="#7293aa"/><text x="132" y="543">Drag. Snap. Arrange.</text>
-      <circle cx="108" cy="597" r="4" fill="#7293aa"/><text x="132" y="605">Left, right, above or below.</text>
-      <circle cx="108" cy="659" r="4" fill="#7293aa"/><text x="132" y="667">Preview before you apply.</text>
-      <circle cx="108" cy="721" r="4" fill="#7293aa"/><text x="132" y="729">Keep it. Or go back.</text>
-    </g>
-    <text x="100" y="1015" font-size="18" letter-spacing="1.5" fill="#7b8b95">MATCH YOUR DESKTOP TO YOUR DESK.</text>
-  </g>
-  <image x="670" y="190" width="1030" height="750" preserveAspectRatio="xMidYMid meet" filter="url(#shadow)" xlink:href="screenshots/arrangement.png"/>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1368" height="726" viewBox="0 0 1368 726">
+ <defs><clipPath id="panel"><rect x="20" y="88" width="1328" height="616" rx="25"/></clipPath></defs>
+ <rect width="1368" height="726" fill="#101c16"/>
+ <g font-family="Liberation Sans, Arial, sans-serif">
+  <text x="28" y="38" fill="#d7ddc0" font-size="27" font-weight="700">Your desk. In order.</text>
+  <text x="28" y="65" fill="#99b4a1" font-size="18">Drag, snap, preview — then apply.</text>
+  <text x="1338" y="40" text-anchor="end" fill="#73ad92" font-size="16">MONITOR SWITCHER</text>
+ </g>
+ <image x="20" y="88" width="1328" height="616" preserveAspectRatio="none" clip-path="url(#panel)" xlink:href="screenshots/arrangement.png"/>
 </svg>

@@ -1,3 +1,27 @@
+// Pick legible text for a solid theme accent, including light themes.
+function contrastText(color) {
+  function channel(value) {
+    return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4)
+  }
+  var luminance = 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
+  return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? "#000000" : "#ffffff"
+}
+
+// Preserve failure codes through the output cap; arguments never become shell code.
+function settingCommand(program, args, timeoutSeconds) {
+  return ["bash", "-o", "pipefail", "-c",
+    'timeout -k 1 "$1" "${@:2}" 2>&1 | head -c 65536',
+    "monitor-switcher", String(timeoutSeconds === undefined ? 12 : timeoutSeconds), program].concat(args)
+}
+
+function settingError(label, exitCode, output, crashed) {
+  if (exitCode === 0 && !crashed) return ""
+  if (exitCode === 124 || exitCode === 137) return label + " timed out. Please try again."
+  var detail = String(output || "").replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").trim()
+  if (detail.length > 240) detail = detail.slice(0, 237) + "…"
+  return label + " failed." + (detail ? " " + detail : " Please try again.")
+}
+
 function clampBrightness(value) {
   var n = Number(value)
   if (!isFinite(n)) return 1
@@ -161,7 +185,7 @@ function physicalSize(display) {
 
 // One shared physical-to-UI factor per gallery. Reduce columns rather than
 // shrinking embedded controls into unreadable labels on narrow panels.
-function galleryLayout(monitors, width, gap, minimumWidth, maximumHeight, footerHeight) {
+function galleryLayout(monitors, width, gap, minimumWidth, maximumHeight, footerHeight, minimumHeight) {
   if (!monitors.length || width <= 0) return { boxes: [], height: 0 }
   var sizes = monitors.map(physicalSize)
   var columns = Math.min(3, monitors.length), factor = 1
@@ -173,7 +197,7 @@ function galleryLayout(monitors, width, gap, minimumWidth, maximumHeight, footer
       factor = Math.min(factor, (width - gap * (group.length - 1)) / total)
     }
     factor = Math.min(factor, maximumHeight / Math.max.apply(null, sizes.map(function(s) { return s.height })))
-    if (columns === 1 || sizes.every(function(s) { return s.width * factor >= minimumWidth })) break
+    if (columns === 1 || sizes.every(function(s) { return s.width * factor >= minimumWidth && s.height * factor >= (minimumHeight || 0) })) break
     columns--
   }
   var footer = footerHeight === undefined ? gap * 2 : footerHeight
@@ -205,6 +229,13 @@ function resolutionChoices(display) {
 
 function cardChoices(display, field) {
   var size = displayDimensions(display)
+  if (field === 'nightlight') return [
+    {label: "Off · daylight", value: "off"},
+    {label: "Mild · 5000 K", value: "5000"},
+    {label: "Warm · 4000 K", value: "4000"},
+    {label: "Warmer · 3500 K", value: "3500"},
+    {label: "Amber · 2500 K", value: "2500"}
+  ]
   if (field === 'mode') return resolutionChoices(display)
   if (field === 'refresh') return (display.availableModes || [])
     .filter(function(m) { return m.width === size.width && m.height === size.height })
@@ -221,6 +252,10 @@ function cardChoices(display, field) {
 
 function settingIsCurrent(display, field, value) {
   if (!display || !display.usable) return false
+  if (field === 'nightlight') {
+    var state = display.nightLight || {}
+    return value === 'off' ? !state.enabled : state.active && Number(value) === state.temperature
+  }
   if (field === 'scale') return Math.abs(Number(value) - Number(display.scale)) < 0.0001
   var mode = /^(\d+)x(\d+)@([\d.]+)$/.exec(String(value))
   return !!mode && Number(mode[1]) === Number(display.width) && Number(mode[2]) === Number(display.height)
@@ -324,6 +359,9 @@ function packDisplays(boxes) {
 
 if (typeof module !== "undefined") {
   module.exports = {
+    contrastText: contrastText,
+    settingCommand: settingCommand,
+    settingError: settingError,
     clampBrightness: clampBrightness,
     normalizeScale: normalizeScale,
     cleanScale: cleanScale,

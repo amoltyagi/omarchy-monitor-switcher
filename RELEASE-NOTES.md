@@ -1,46 +1,26 @@
-# Monitor Switcher 3.0.1
+# Monitor Switcher
 
-## Clearer confirmations.
+Independent Night Light for every monitor.
 
-- No stale red “change pending” message after a preview ends.
-- All monitor panels share the same action and confirmation state.
-- Choosing the current setting does nothing; it no longer starts a preview.
-- Focus another display without cancelling the preview.
-- Normal timeouts are status messages. Actual failures remain visible.
+![Different Night Light settings on three monitors, with the temperature menu open](preview.png)
 
-Existing settings and shortcuts are preserved.
+- Choose warmth separately for each display: 2500–5000 K, or Off.
+- Open the temperature menu directly from its toggle. Other monitors keep their settings.
+- Enjoy a polished gallery that adapts to screen size and scale, with readable controls.
+- Bring the middle monitor back after joining the outer displays; the switcher makes room.
+- Restore a verified working layout and try display changes with 20-second Keep/Revert.
 
----
+Preferences persist across reloads and reboots. Power changes continue even if
+the initiating screen turns off, and rollback verifies the restored layout.
 
-# Monitor Switcher 3.0
+![Drag-and-snap arrangement with the Apply action](preview-detail.png)
 
-## Your desk. In order.
-
-A major redesign of the monitor panel for Omarchy.
-
-- **Settings on the display.** Click resolution, refresh rate or scale to edit.
-- **Power, simplified.** An On/Off switch beneath every monitor.
-- **Arrange by dragging.** Snap screens together or place them left, right, above or below.
-- **Try it first.** Verified changes with 20-second Keep / Revert.
-- **Shortcuts without the clutter.** The original monitor shortcut stays. More shortcuts opens the rest.
-
-Rounded surfaces, clearer controls and theme-aware colors throughout.
-
-### Under the surface
-
-Monitor detection now handles a display without an active mode without losing
-the rest. Saved settings and live values are shown separately. Power, focus and
-layout changes are checked against the compositor, and duplicate monitor entries
-are caught before they can produce conflicting rules.
-
-### Update
+Update with:
 
 ```bash
 omarchy plugin update case.monitor-switcher
 ```
 
-Existing monitor settings and shortcuts carry forward.
+Existing settings and shortcuts carry forward.
 
-![The redesigned display panel](https://raw.githubusercontent.com/amoltyagi/omarchy-monitor-switcher/v3.0.0/preview.png)
-
-![The new arrangement view](https://raw.githubusercontent.com/amoltyagi/omarchy-monitor-switcher/v3.0.0/preview-detail.png)
+[Full changelog](CHANGELOG.md) · [Implementation and verification handoff](HANDOFF.md)

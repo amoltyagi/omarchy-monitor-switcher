@@ -10,6 +10,8 @@ var actionOwner = null
 var reconciling = false
 var snapshot = null
 var snapshotError = ""
+var nightLightSnapshot = null
+var nightLightBusy = false
 
 function updateBusy() {
   panels.forEach(function(p) { p.sharedActionRunning = actionOwner !== null || reconciling })
@@ -34,6 +36,8 @@ function register(panel) {
   panel.sharedActionRunning = actionOwner !== null || reconciling
   if (snapshot !== null) panel.acceptSnapshot(snapshot)
   panel.stateError = snapshotError
+  panel.nightLightBusy = nightLightBusy
+  if (nightLightSnapshot !== null) panel.acceptNightLight(nightLightSnapshot)
 }
 
 function unregister(panel) {
@@ -95,4 +99,20 @@ function readFailed(message, ticket) {
 function activePanel(screenName) {
   return panels.find(function(p) { return p.screenName === screenName })
     || panels.find(function(p) { return p.opened }) || panels[0]
+}
+
+
+function publishNightLight(state) {
+  nightLightSnapshot = state
+  nightLightBusy = false
+  panels.forEach(function(p) { p.nightLightBusy = false; p.acceptNightLight(state) })
+}
+
+function setNightLight(output, value) {
+  if (nightLightBusy) return
+  var owner = panels.find(function(p) { return p.ipcOwner })
+  if (!owner) return
+  nightLightBusy = true
+  panels.forEach(function(p) { p.nightLightBusy = true })
+  owner.writeNightLight(output, value)
 }

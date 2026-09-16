@@ -1,14 +1,17 @@
 <img src="logo.svg" alt="Monitor Switcher logo" width="88" height="88">
 
-# Monitor Switcher 3
+# Monitor Switcher
 
-## Your desk. In order.
+## Night Light. Each display.
 
-A major redesign of the monitor panel for [Omarchy](https://omarchy.org).
+Your displays in one panel for [Omarchy](https://omarchy.org). Set a different
+Night Light temperature on each monitor, or leave individual screens in daylight.
 
-<img src="preview.png" alt="Monitor Switcher 3 — Your desk. In order. The redesigned display panel with clickable settings and power switches." width="1000">
+<img src="preview.png" alt="Monitor Switcher: MSI at 4000 K, LG at 5000 K, and Acer with Night Light off. The temperature menu opens from its own toggle." width="1000">
 
 - **Click to edit.** Resolution, refresh and scale sit right on each display.
+- **Independent warmth.** MSI at 4000 K, LG at 5000 K, Acer off — each monitor has its own saved Night Light setting.
+- **Recover your desk.** Restore the last verified layout for the connected monitor combination.
 - **Switch it on.** A simple power toggle beneath every monitor.
 - **Drag to arrange.** Snap screens together to match your desk.
 - **Try it first.** Verified changes with 20-second Keep / Revert.
@@ -24,7 +27,7 @@ layout, apply it, and keep it only when it feels right.
 
 <img src="preview-detail.png" alt="The new arrangement view: drag-and-snap positioning, directional controls and a preview before applying changes." width="1000">
 
-[Main panel screenshot](assets/screenshots/displays.png) · [Arrangement screenshot](assets/screenshots/arrangement.png)
+[Main panel](assets/screenshots/displays.png) · [Night Light menu](assets/screenshots/night-light.png) · [Arrangement](assets/screenshots/arrangement.png)
 
 This is an **unofficial fork** of Omarchy's `omarchy.monitor` widget, originally
 vendored from Omarchy 4.0.0 under MIT. It is not affiliated with or supported by
@@ -36,6 +39,8 @@ See [UPSTREAM.md](UPSTREAM.md) for attribution and maintenance notes.
 
 Requires Omarchy 4.x with its Lua-based Hyprland configuration and Quickshell.
 The backend uses Bash, jq, coreutils and util-linux tools supplied by Omarchy.
+Per-monitor Night Light also needs Python 3 and compositor support for
+`wlr-gamma-control-v1` and `wl_output` version 4. No Python packages are required.
 
 ```bash
 omarchy plugin add https://github.com/amoltyagi/omarchy-monitor-switcher --enable
@@ -62,10 +67,22 @@ Click the monitor icon in the bar to open the panel.
 | On/Off switch | Persistently toggle that monitor; the last usable screen is protected |
 | Resolution / Hz / scale chip | Click, choose a supported value, then Keep within 20 seconds |
 | Arrange… | Preview positions by dragging or using placement buttons, then Apply |
+| Night Light | Open a menu anchored to its toggle (above when space is tight); choose Off or 2500–5000 K while monitor details remain visible |
+| Restore working layout… | Under More shortcuts; preview the last verified layout for this connected monitor combination |
 | Brightness | Adjust the focused monitor when brightness control is available |
 | Text size | Adjust shell/GTK text size through Omarchy's text-size command |
 | More shortcuts | Expand optional keyboard guidance; `?` also toggles it |
 | Wheel/touchpad scroll | Scroll the panel without changing values |
+
+The gallery fits the host screen in logical coordinates and wraps to fewer columns
+when its controls would otherwise be crowded. Subtle casing and screen gradients
+provide depth while preserving readable labels and focus borders.
+
+When a disabled monitor returns to an occupied saved position in a horizontal
+row, the switcher reopens its slot and shifts monitors to its right. For example,
+after joining 1 and 3, enabling 2 restores the 1–2–3 row. For other arrangements,
+it uses the nearest free adjoining edge. Failed changes restore the previous
+configuration; explicit overlapping arrangement edits are still rejected.
 
 Each chip targets its own monitor, even when another desktop has focus.
 Brightness targets the focused monitor. Hz describes the compositor's display
@@ -89,6 +106,7 @@ timeout or an already-finished preview is not shown as a red error.
 | Left/Right or `h`/`l` | Walk selections or adjust brightness/text size |
 | Enter/Space | Focus the selected display, choose an option, or activate Keep/Revert |
 | `m` / `r` / `s` | Open resolution / refresh / scale for the selected display |
+| `t` | Open Night Light for the selected display |
 | `p` | Toggle the selected display |
 | `a` | Open/close Arrange |
 | `?` | Expand/collapse More shortcuts |
@@ -140,6 +158,7 @@ monitor-switcher refresh MSI 240         # begin trial; prints confirmation toke
 monitor-switcher confirm <token>         # keep the trial mode
 monitor-switcher revert <token>          # restore previous settings
 monitor-switcher apply                   # apply the saved layout
+monitor-switcher recover                 # try the last verified layout for this monitor set
 ```
 
 Refresh requests must match an advertised rate, e.g. `74.98` rather than `75`
@@ -170,6 +189,24 @@ Geometry comes from configured resolution, scale and rotation, not a temporary
 live fallback. `plan` does not apply a layout, but may update config metadata.
 Use this plugin or another monitor-layout manager, not both: tools writing
 rules for the same output can overwrite each other.
+
+### Night Light and recovery
+
+Night Light is independent for each active monitor. Click its toggle to open
+the temperature menu; the other displays keep their own settings. The menu opens
+above the toggle when there is not enough room below. Off restores that output's
+original gamma; the cool illustration means no plugin warming, not an additional
+blue filter. Preferences follow the monitor identity when available and reapply
+on reconnect or shell restart. An unavailable or conflicting gamma controller
+produces a visible error. A separate global Night Light, such as hyprsunset,
+still affects every monitor and can compound this plugin's warming.
+
+Successful applies and confirmed trials save the latest verified layout for
+up to eight connected monitor combinations. **Restore working layout…** starts
+a normal Keep/Revert trial; plugging in monitors does not automatically switch
+profiles. A failed trial never replaces the verified snapshot. Rollback keeps
+its backup until the surviving monitors match the previous working state.
+Power changes continue even if disabling a monitor destroys its panel.
 
 ## Configuration
 
@@ -209,6 +246,8 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 
 | State file | Purpose |
 |---|---|
+| `~/.config/monitor-switcher/night-light.json` | Per-monitor Night Light preferences |
+| `~/.local/state/monitor-switcher/working-layouts.json` | Last verified layout for up to eight monitor combinations |
 | `~/.config/monitor-switcher/config.json` | Monitor order and settings |
 | `~/.local/state/monitor-switcher/state.json` | Disabled outputs |
 | `~/.local/state/monitor-switcher/refresh-pending.json` | Temporary trial and rollback backup |
@@ -254,8 +293,9 @@ Never modify packaged Omarchy files.
 
 ```bash
 node --test tests/*.test.js
-bash -n bin/monitor-switcher
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
+bash -n bin/monitor-switcher bin/monitor-action
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QPA_PLATFORMTHEME= \
   /usr/lib/qt6/bin/qmltestrunner -input tests/ui -import tests/ui/imports
 ```
 

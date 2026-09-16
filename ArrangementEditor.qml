@@ -95,7 +95,7 @@ Column {
         radius: Style.space(7)
         color: Color.background
         border.width: selected ? 2 : 1
-        border.color: selected ? Color.accent : Util.alpha(Color.foreground, 0.4)
+        border.color: selected ? Color.accent : Util.alpha(Color.foreground, 0.88)
         z: selected ? 2 : 1
         Behavior on x { enabled: !editor.dragging; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
         Behavior on y { enabled: !editor.dragging; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
@@ -125,7 +125,7 @@ Column {
             visible: parent.parent.height > Style.space(55)
             text: display.selected ? "Drag to position" : "Click to select"
             horizontalAlignment: Text.AlignHCenter
-            color: Util.alpha(Color.foreground, 0.55)
+            color: Util.alpha(Color.foreground, 0.88)
             font.family: editor.fontFamily
             font.pixelSize: Style.font.caption
           }
@@ -174,7 +174,7 @@ Column {
     Text {
       height: Style.space(29)
       text: (editor.selectedDisplay.name || "Display") + " relative to"
-      color: Util.alpha(Color.foreground, 0.65)
+      color: Util.alpha(Color.foreground, 0.88)
       verticalAlignment: Text.AlignVCenter
       font.family: editor.fontFamily
       font.pixelSize: Style.font.caption
@@ -212,7 +212,7 @@ Column {
     text: editor.confirming ? "Keep this arrangement? Reverting in " + editor.seconds + " seconds."
       : editor.notice || editor.problem || "Drag displays to match your desk, then apply."
     wrapMode: Text.WordWrap
-    color: editor.problem && editor.dirty ? Color.urgent : Util.alpha(Color.foreground, 0.65)
+    color: editor.problem && editor.dirty ? Color.urgent : Util.alpha(Color.foreground, 0.88)
     font.family: editor.fontFamily
     font.pixelSize: Style.font.caption
   }
@@ -235,14 +235,18 @@ Column {
       fontFamily: editor.fontFamily
       onClicked: { editor.draft = Model.packDisplays(editor.draft); editor.viewBoxes = editor.draft; editor.notice = "" }
     }
-    SettingChip {
-      text: editor.confirming ? "Keep arrangement" : "Apply arrangement"
-      chevron: false
-      primary: true
-      enabled: editor.confirming ? !editor.pending.reverting && editor.seconds > 0 : editor.dirty && !editor.problem && !editor.busy
-      hasCursor: editor.confirming && editor.confirmationIndex === 1
-      fontFamily: editor.fontFamily
-      onClicked: editor.confirming ? editor.confirmRequested(true) : editor.apply()
-    }
+  }
+  SettingChip {
+    objectName: "apply-arrangement"
+    width: parent.width
+    height: Math.max(implicitHeight, Style.space(42))
+    text: editor.confirming ? "Keep arrangement" : "Apply arrangement"
+    chevron: false
+    primary: true
+    fontSize: Style.font.body
+    enabled: editor.confirming ? !editor.pending.reverting && editor.seconds > 0 : editor.dirty && !editor.problem && !editor.busy
+    hasCursor: editor.confirming && editor.confirmationIndex === 1
+    fontFamily: editor.fontFamily
+    onClicked: editor.confirming ? editor.confirmRequested(true) : editor.apply()
   }
 }

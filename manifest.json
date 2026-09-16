@@ -2,17 +2,19 @@
   "schemaVersion": 1,
   "id": "case.monitor-switcher",
   "name": "Monitor Switcher",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "author": "amoltyagi",
   "license": "MIT",
-  "description": "Your displays. One place. A redesigned monitor panel with click-to-edit settings, power switches, drag-to-arrange and 20-second Keep/Revert.",
-  "kinds": ["bar-widget"],
+  "description": "Independent Night Light for every monitor, click-to-edit display settings, power switches, drag-to-arrange and verified Keep/Revert.",
+  "kinds": [
+    "bar-widget"
+  ],
   "entryPoints": {
     "barWidget": "Panel.qml"
   },
   "barWidget": {
     "displayName": "Monitor Switcher",
-    "description": "Embedded display settings, power switches, visual arrangement and optional keyboard help, with persistent layouts and verified rollback",
+    "description": "Per-monitor warmth, adaptive display controls, persistent layouts and verified recovery",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"

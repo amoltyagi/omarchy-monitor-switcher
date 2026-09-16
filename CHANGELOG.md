@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.1.0 — Independent Night Light — 2026-09-16
+
+- Set and save Night Light independently for each monitor; open its temperature
+  menu from its own toggle without hiding the monitor specifications.
+- Keep the temperature menu onscreen, opening above the toggle when space is tight.
+- Adapt the gallery to logical screen dimensions and scaling; wrap before the
+  status/resolution and refresh/scale controls become crowded.
+- Add subtle screen/casing gradients, reflected light and clear focus borders.
+- Make room for a returning middle monitor after closing its gap; reopen the
+  horizontal slot or choose a free adjoining edge, with verified rollback.
+- Restore the last verified layout for the connected monitor combination.
+- Finish power changes even when disabling their initiating monitor panel.
+- Verify rollback before discarding backups and preserve first-run positions.
+- Surface bounded brightness/text-size command failures.
+- Replace the old text-heavy artwork and earlier screenshots with fresh,
+  tightly cropped plugin captures showing different Night Light states.
+- Keep the public name “Monitor Switcher”; versions belong in release metadata.
+- Add responsive QML and returning-display/rollback tests; see HANDOFF.md.
+
 ## 3.0.1 — Clearer confirmations — 2026-09-16
 
 - Fixed stale red “refresh change pending” messages after a preview finished.

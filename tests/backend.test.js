@@ -51,7 +51,7 @@ if (args === 'monitors all -j') {
     console.error('stub reload failure'); process.exit(1);
   }
   if (changing && control.failure === 'rejection') { console.log('error: unsupported mode'); process.exit(0); }
-  const live = JSON.parse(fs.readFileSync(liveFile, 'utf8'));
+  const live = JSON.parse(fs.readFileSync(layout === null && control.failure !== 'verify' ? path.join(home, 'base-live.json') : liveFile, 'utf8'));
   for (const line of text.split('\\n')) {
     const name = line.match(/output = "([A-Za-z0-9_.-]+)"/);
     const monitor = name && live.find(m => m.name === name[1]);
@@ -131,6 +131,7 @@ async function fixture(t, options = {}) {
     writeFile(config, originalConfig), writeFile(generated, originalLua),
     writeFile(path.join(home, 'SANDBOX'), 'no live monitors'),
     writeFile(path.join(home, 'live.json'), JSON.stringify(live)),
+    writeFile(path.join(home, 'base-live.json'), JSON.stringify(live)),
     writeFile(path.join(home, 'control.json'), JSON.stringify(options.control ?? {})),
     writeFile(path.join(stateDir, 'state.json'), JSON.stringify({ disabled: options.disabled ?? [] })),
     writeFile(path.join(bin, 'hyprctl'), stub, { mode: 0o700 }),
@@ -288,12 +289,18 @@ test('invalid rates, unsupported rates, unknown and nonactive IDs are rejected w
 });
 
 for (const failure of ['apply', 'rejection', 'reload', 'configerrors', 'verify', 'resolution']) {
-  test(`${failure} failure restores config AND Lua and clears pending`, async t => {
+  test(`${failure} failure restores files and retains pending until live recovery is verified`, async t => {
     const f = await fixture(t, { control: { failure } });
     const result = await f.run('refresh', 'DP-1', '240');
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /refresh failed; restoring/);
     await f.unchanged();
+    if (failure === 'apply') {
+      // A broken monitor query cannot certify rollback, even when files restored.
+      const pending = await f.json(f.pending);
+      await f.control({});
+      await f.ok('state', '--json');
+    }
     await f.noPending();
     assert.equal((await f.json(path.join(f.home, 'live.json')))[0].refreshRate, 60);
   });
@@ -314,6 +321,10 @@ test('verification cannot mistake the adjacent 239.97 mode for 240', async t => 
   assert.notEqual(result.code, 0);
   assert.match(result.stderr, /verification failed/);
   await f.unchanged();
+  // The same rate offset also prevents an exact restore; retain the backup.
+  const pending = await f.json(f.pending);
+  await f.control({});
+  await f.ok('state', '--json');
   await f.noPending();
 });
 
@@ -905,4 +916,102 @@ test('first-run diagnostics stay on stderr and state stdout remains valid JSON',
   const state = JSON.parse(result.stdout);
   assert.equal(state.monitors.length, 2);
   assert.equal(state.refreshPending, null);
+});
+
+
+test('rollback retains recovery data until the original live mode is restored', async t => {
+  const f = await fixture(t)
+  await f.ok('refresh', 'DP-1', '240')
+  await f.stopWatchdog()
+  const pending = await f.json(f.pending)
+  await f.control({failure: 'verify'})
+  const failed = await f.run('revert', pending.token)
+  assert.notEqual(failed.code, 0)
+  assert.equal((await f.json(f.pending)).reverting, true)
+  assert.equal((await f.json(path.join(f.home, 'live.json')))[0].refreshRate, 240)
+  await f.control({})
+  await f.ok('state', '--json')
+  await f.noPending()
+  assert.equal((await f.json(path.join(f.home, 'live.json')))[0].refreshRate, 60)
+})
+
+test('first-run adoption preserves existing monitor positions on apply', async t => {
+  const f = await fixture(t)
+  await rm(f.config)
+  await f.ok('state', '--json')
+  await f.ok('apply')
+  const live = await f.json(path.join(f.home, 'live.json'))
+  assert.deepEqual(live.map(m => [m.x, m.y]), f.live.map(m => [m.x, m.y]))
+})
+
+test('verified layouts are saved per monitor set and recovery is a reversible trial', async t => {
+  const f = await fixture(t)
+  await f.ok('apply')
+  const saved = path.join(f.stateDir, 'working-layouts.json')
+  const history = await f.json(saved)
+  assert.equal(history.length, 1)
+  await f.ok('refresh', 'DP-1', '240')
+  assert.deepEqual(await f.json(saved), history, 'unconfirmed trials cannot replace the recovery point')
+  await f.ok('revert', (await f.json(f.pending)).token)
+  const changed = f.monitors.map(m => ({...m}))
+  changed[0].mode = '3840x2160@120.00'
+  await writeFile(f.config, JSON.stringify(changed))
+  await f.ok('recover')
+  assert.equal((await f.json(f.config))[0].mode, 'preferred')
+  await f.ok('revert', (await f.json(f.pending)).token)
+  assert.equal((await f.json(f.config))[0].mode, '3840x2160@120.00')
+  await writeFile(path.join(f.home, 'live.json'), JSON.stringify([f.live[0]]))
+  await f.ok('apply')
+  assert.equal((await f.json(saved)).length, 2)
+})
+
+for (const control of [{}, {failure: 'reload', failGenerated: true}]) {
+  test(`returning middle monitor finds room after its slot was closed; ${control.failure || 'success'}`, async t => {
+    const monitors = [
+      {output: 'DP-1', mode: '1920x1080@60.00', scale: 1, position: '0x0'},
+      {output: 'DP-2', mode: '1920x1080@60.00', scale: 1, position: '1920x0'},
+      {output: 'DP-3', mode: '1920x1080@60.00', scale: 1, position: '1920x0'},
+    ];
+    const live = monitors.map((m, i) => ({name: m.output, width: i === 1 ? 0 : 1920,
+      height: i === 1 ? 0 : 1080, scale: 1, transform: 0, x: i ? 1920 : 0, y: 0,
+      refreshRate: 60, disabled: i === 1, availableModes: ['1920x1080@60.00Hz']}));
+    const f = await fixture(t, {monitors, live, disabled: ['DP-2'], control});
+    const result = await f.run('enable', 'DP-2');
+    if (control.failure) {
+      assert.notEqual(result.code, 0);
+      assert.deepEqual(await f.json(f.config), monitors);
+      assert.equal(await readFile(f.generated, "utf8"), f.originalLua);
+      assert.deepEqual((await f.json(path.join(f.stateDir, 'state.json'))).disabled, ['DP-2']);
+    } else {
+      assert.equal(result.code, 0, result.stderr);
+      const actual = await f.json(path.join(f.home, 'live.json'));
+      assert.equal(actual[0].x, 0);
+      assert.equal(actual[1].x, 1920);
+      assert.equal(actual[2].x, 3840);
+      assert.equal(actual[1].disabled, false);
+      assert.equal(JSON.parse((await f.ok('state', '--json')).stdout).overlaps.length, 0);
+    }
+  });
+}
+
+test('returning monitor in a mixed-scale vertical layout uses a free touching edge', async t => {
+  const monitors = [
+    {output: 'DP-1', mode: '3840x2160@60.00', scale: 2, transform: 1, position: '-1080x0'},
+    {output: 'DP-2', mode: '1920x1080@60.00', scale: 1, position: '-1080x1920'},
+    {output: 'DP-3', mode: '1920x1080@60.00', scale: 1, position: '-1080x1920'},
+  ];
+  const live = monitors.map((m, i) => ({name: m.output, width: i === 0 ? 3840 : i === 1 ? 0 : 1920,
+    height: i === 0 ? 2160 : i === 1 ? 0 : 1080, scale: m.scale, transform: m.transform || 0,
+    x: -1080, y: i ? 1920 : 0, refreshRate: 60, disabled: i === 1,
+    availableModes: [i === 0 ? '3840x2160@60.00Hz' : '1920x1080@60.00Hz']}));
+  const f = await fixture(t, {monitors, live, disabled: ['DP-2']});
+  await f.ok('enable', 'DP-2');
+  const actual = await f.json(path.join(f.home, 'live.json'));
+  assert.deepEqual([actual[0].x, actual[0].y], [-1080, 0]);
+  assert.deepEqual([actual[2].x, actual[2].y], [-1080, 1920]);
+  assert.equal(actual[1].disabled, false);
+  const state = JSON.parse((await f.ok('state', '--json')).stdout);
+  assert.deepEqual(state.overlaps, []);
+  const m = actual[1], a = actual[2];
+  assert.ok(m.x + 1920 === a.x || a.x + 1920 === m.x || m.y + 1080 === a.y || a.y + 1080 === m.y);
 });
