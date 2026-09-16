@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.0.0 — A major redesign — 2026-09-16
+
+**Your desk. In order.** A major overhaul of the display panel: settings on the
+screen, switches beneath it, and a new way to arrange your desktop.
+
+- Click resolution, refresh or scale to edit.
+- Turn each display on or off with its own switch.
+- Drag and snap screens into place.
+- Try changes with 20-second Keep / Revert.
+- Keep the original shortcut. Reveal more when you need them.
+
+### Details
+
+- Refined the panel with rounded surfaces, sans-serif typography, subtle focus
+  accents and clearly clickable resolution, refresh and scale chips.
+- Embedded specifications and diagonal size markers in physically proportioned
+  monitors. Added On/Off switches below the stands with pending feedback.
+- Kept the original Super+Shift+Ctrl+1…N hint; additional controls are available
+  through More shortcuts instead of a dense default footer.
+- Added Arrange: drag-and-snap desktop positions, relative placement buttons,
+  horizontal alignment, overlap/connectivity validation and atomic Keep/Revert.
+- Added focus through Hyprland's typed Lua dispatcher and per-card mode/scale
+  trials. One panel instance owns IPC and routes requests to the focused screen.
+- Modeless monitors no longer block discovery of every display. Running and
+  saved settings are distinct, errors are visible, and changes verify actual
+  mode, scale, rotation, position and power before reporting success.
+- Reject duplicate output entries, reconcile unambiguous hardware reconnection,
+  exclude FALLBACK adoption and preserve exact power intent on failures.
+- Expanded backend/model regressions and added offscreen UI tests for dragging,
+  per-card targeting, wheel behavior and power-switch feedback.
+
 ## 2.6.1 - 2026-09-08
 
 - Added an original two-monitor/slider logo to the bar, panel header and

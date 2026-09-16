@@ -20,9 +20,13 @@
 #   monitor-switcher disable <id>     Disable monitor
 #   monitor-switcher move <id> <XxY>  Pin monitor to an explicit position
 #   monitor-switcher move <id> <left-of|right-of|above|below> <id2>
+#   monitor-switcher arrange <json>    Try [{output,x,y}, ...] positions for 20 seconds
 #   monitor-switcher swap <a> <b>     Exchange two monitors' places in the pack order
 #   monitor-switcher pack             Clear all pinned positions; re-pack left-to-right
 #   monitor-switcher scale <id> <factor>  Set scale (rounded to a Hyprland-clean value)
+#   monitor-switcher scale-trial <id> <factor>  Try scaling for 20 seconds
+#   monitor-switcher focus <id>          Focus a usable monitor (never changes power)
+#   monitor-switcher mode <id> <WxH@Hz>  Try an advertised resolution for 20 seconds
 #   monitor-switcher refresh <id> <Hz>    Try an advertised rate for 20 seconds
 #   monitor-switcher confirm <token>     Keep the pending refresh change
 #   monitor-switcher revert <token>      Restore the previous config and layout
@@ -111,7 +115,30 @@ read_config() { # stdout: validated config; an unreadable config is fatal
   local content
   content=$(read_json "$CONFIG_FILE") \
     || die "cannot read $CONFIG_FILE (missing, not a regular file, symlink, or invalid JSON) — delete it to re-seed"
+  validate_config "$content"
   printf '%s\n' "$content"
+}
+
+validate_config() {
+  local duplicates
+  jq -e '
+    def positive: type == "number" and isfinite and . > 0;
+    type == "array" and all(.[];
+      type == "object"
+      and (.output | type == "string" and test("^[A-Za-z0-9_.-]+$"))
+      and (.alias == null or (.alias | type == "string"))
+      and ((.scale // 1) | positive and . >= 0.25 and . <= 5)
+      and ((.transform // 0) | type == "number" and . == floor and . >= 0 and . <= 7)
+      and ((.mode // "preferred") | type == "string" and
+        test("^(preferred|[1-9][0-9]*x[1-9][0-9]*(@[0-9]+(\\.[0-9]+)?)?)$"))
+      and (.position == null or (.position | type == "string" and test("^-?[0-9]+x-?[0-9]+$")))
+      and (.mode_w == null or (.mode_w | type == "number" and isfinite and . >= 0 and . == floor))
+      and (.mode_h == null or (.mode_h | type == "number" and isfinite and . >= 0 and . == floor))
+      and (.identity == null or (.identity | type == "object" and
+        all(.make, .model, .serial; type == "string"))))
+  ' <<<"$1" > /dev/null || die "invalid monitor config: check output, mode, scale, transform and geometry in $CONFIG_FILE"
+  duplicates=$(jq -r 'group_by(.output) | map(select(length > 1) | .[0].output) | join(", ")' <<<"$1")
+  [[ -z $duplicates ]] || die "duplicate monitor outputs: $duplicates; merge their config entries before applying"
 }
 
 write_file() { # <file> — stdin: content. Atomic, symlink-refusing write.
@@ -257,27 +284,34 @@ launch_watchdog() {
 
 # hyprctl can answer empty, partial, or mid-transition while the compositor
 # is busy re-enumerating outputs (reloads, physical hotplug, the watcher's
-# modeless-recovery loop). Callers write files derived from this data, so a
-# bad answer must never pass through: require a complete answer (every
-# enabled monitor has a real mode) that is identical across two reads
-# (geometry settled), else keep retrying briefly.
+# modeless-recovery loop). A modeless output is a valid observation, not a
+# reason to hide every other display or block recovery. Mutation validation
+# below uses configured/advertised geometry and checks the applied result.
 live() {
   local out ok geom prev_geom="" i deadline=$((SECONDS + 4))
   for i in $(seq 1 10); do
     if out=$(timeout -k 1 1 hyprctl monitors all -j 2> /dev/null | head -c "$MAX_FILE_BYTES") && [[ -n $out ]]; then
       ok=$(jq -r '
-        if (type == "array" and length > 0
-            and all(.[]; .disabled == true or ((.width // 0) > 0 and (.height // 0) > 0)))
+        if (type == "array"
+            and all(.[]; type == "object"
+              and (.name | type == "string" and test("^[A-Za-z0-9_.-]+$"))
+              and all(.width, .height; type == "number" and isfinite and . >= 0)
+              and ((.scale // 1) | type == "number" and isfinite and . > 0))
+            and (map(.name) | length == (unique | length)))
         then "ok" else "bad" end' <<<"$out" 2> /dev/null) || ok=""
       if [[ $ok == ok ]]; then
-        if geom=$(jq -c '[.[] | {name, disabled, width, height, transform}] | sort_by(.name)' <<<"$out"); then
+        if geom=$(jq -c '[.[] | {name, disabled, width, height, transform, scale, x, y, refreshRate}] | sort_by(.name)' <<<"$out"); then
           if [[ -n $prev_geom && $geom == "$prev_geom" ]]; then
             printf '%s\n' "$out"
             return 0
           fi
           prev_geom=$geom
         fi
+      else
+        prev_geom=""
       fi
+    else
+      prev_geom=""
     fi
     (( SECONDS < deadline )) || break
     sleep 0.3
@@ -316,21 +350,14 @@ set_disabled() { # <output> <true|false>
 # Create a config from the current live setup, ordered left-to-right.
 seed_config() {
   local seeded
-  seeded=$(live | jq '
-    sort_by(.x)
-    | map({
-        output: .name,
-        alias: (.model // .name),
-        scale: .scale,
-        mode: "preferred",
-        transform: (.transform // 0),
-        mode_w: .width,
-        mode_h: .height
-      })
-  ') || die "could not seed config from live state"
+  local lv
+  lv=$(live) || return 1
+  seeded=$(adopt_new "$(jq 'sort_by(.x)' <<<"$lv")" <<< '[]') || die "could not seed config from live state"
+  seeded=$(backfill_geometry "$seeded" "$lv") || return 1
   # Build-then-write: the layout is fully derived before write_file stages it.
   [[ -n $seeded ]] || die "could not seed config from live state"
   printf '%s\n' "$seeded" | write_file "$CONFIG_FILE"
+  read_state | jq --argjson lv "$lv" '.disabled = ((.disabled // []) + [$lv[] | select(.disabled == true and .name != "FALLBACK") | .name] | unique)' | write_file "$STATE_FILE"
   echo "monitor-switcher: created $CONFIG_FILE from current setup" >&2
 }
 
@@ -344,25 +371,65 @@ resolve() { # <id>
     jq -r --arg n "$1" '($n | tonumber) as $n | select($n >= 1 and $n <= length) | .[$n - 1].output // empty' <<<"$cfg"
     return
   fi
-  jq -r --arg id "$1" '
-    .[] | select(.output == $id or ((.alias // "") | ascii_downcase) == ($id | ascii_downcase))
-    | .output
-  ' <<<"$cfg" | head -1
+  local matches
+  matches=$(jq --arg id "$1" '
+    if any(.[]; .output == $id) then [$id] else
+      [.[] | select(((.alias // "") | ascii_downcase) == ($id | ascii_downcase)) | .output] end
+  ' <<<"$cfg")
+  [[ $(jq length <<<"$matches") -le 1 ]] || die "ambiguous monitor alias: $1; use its output name or number"
+  jq -r '.[0] // empty' <<<"$matches"
 }
 
 # Config plus any connected-but-unlisted monitors appended (rightmost).
 adopt_new() { # <live-json> — stdin: current config
   jq --argjson lv "$1" '
+    def identity: if ((.serial // "") != "" and (.serial // "") != "0")
+      then {make: (.make // ""), model: (.model // ""), serial} else null end;
     . as $cfg
-    | $cfg + [
+    | map(. as $c | ([$lv[] | select(.name == $c.output)][0] // null) as $m
+        | if $m != null then
+            ($m | identity) as $id
+            | if .identity != null and $id != null and .identity != $id then
+                error("hardware identity changed on " + .output + "; reconcile the monitor config")
+              elif $id != null then .identity = $id else . end
+          elif .identity != null then
+            ([$lv[] | select(identity == $c.identity)]) as $matches
+            | if ($matches | length) == 1
+                and ([$cfg[] | select(.identity == $c.identity)] | length) == 1
+                and ([$cfg[].output] | index($matches[0].name)) == null
+              then .previousOutput = .output | .output = $matches[0].name else . end
+          else . end) as $known
+    | $known + [
         $lv[]
         | .name as $n
-        | select([$cfg[].output] | index($n) == null)
-        | { output: .name, alias: (.model // .name), scale: .scale,
+        | select($n != "FALLBACK")
+        | select([$known[].output] | index($n) == null)
+        | . as $m | identity as $id
+        | { output: .name, alias: (if (.model // "") != "" then .model else .name end), scale: (.scale // 1),
             mode: "preferred", transform: (.transform // 0),
             mode_w: .width, mode_h: .height }
+          + (if $id != null then {identity: $id} else {} end)
       ]
   '
+}
+
+persist_config() { # Rebind saved off-state when hardware moves to a new connector.
+  local cfg=$1 lv=${2:-[]} st old
+  validate_config "$cfg"
+  old=$(read_config)
+  st=$(read_state | jq --argjson cfg "$old" --argjson lv "$lv" '
+    .disabled = ((.disabled // []) + [$lv[] | select(.disabled == true and .name != "FALLBACK")
+      | .name as $n | select(([$cfg[].output] | index($n)) == null) | $n] | unique)')
+  if jq -e 'any(.[]; .previousOutput != null)' <<<"$cfg" > /dev/null; then
+    st=$(jq --argjson cfg "$cfg" '
+      .disabled |= (map(. as $old | ([$cfg[] | select(.previousOutput == $old)][0].output // $old)) | unique)' <<<"$st")
+  fi
+  if [[ $(jq -c . <<<"$st") != $(read_state | jq -c .) ]]; then printf '%s\n' "$st" | write_file "$STATE_FILE"; fi
+  cfg=$(jq 'map(del(.previousOutput))' <<<"$cfg")
+  # Polling should not rewrite unchanged files (nor trigger file watchers).
+  if [[ ! -f $CONFIG_FILE ]] || [[ $(jq -c . <<<"$cfg") != $(read_config | jq -c .) ]]; then
+    printf '%s\n' "$cfg" | write_file "$CONFIG_FILE"
+  fi
 }
 
 # Backfill mode_w/mode_h for legacy entries: "preferred"-mode monitors added
@@ -374,9 +441,11 @@ backfill_geometry() { # <cfg-json> <live-json>
     map(
       if ((.mode // "preferred") == "preferred") and (((.mode_w // 0) <= 0) or ((.mode_h // 0) <= 0)) then
         (. as $c | [$lv[] | select(.name == $c.output)][0] // null) as $m
-        | if ($m != null) and (($m.width // 0) > 0) then
+        | if ($m != null) and (($m.width // 0) > 0) and (($m.height // 0) > 0) then
             . + { mode_w: $m.width, mode_h: $m.height }
-          else . end
+          else ([$m.availableModes[]? | capture("^(?<w>[0-9]+)x(?<h>[0-9]+)@[0-9.]+(?:Hz)?$")][0] // null) as $mode
+            | if $mode != null then . + {mode_w: ($mode.w | tonumber), mode_h: ($mode.h | tonumber)} else . end
+          end
       else . end
       | if (.mode // "preferred") != "preferred" then del(.mode_w, .mode_h) else . end
     )
@@ -438,6 +507,43 @@ find_overlap() { # <boxes-json>
          | join("; ")' <<<"$1"
 }
 
+# Resolve preferred against trusted geometry, preserving a running advertised
+# rate when possible. Never calculate one resolution and ask Hyprland for another.
+resolved_mode() { # <config-entry> <live-entry>
+  jq -nr --argjson c "$1" --argjson m "$2" '
+    if ($c.mode // "preferred") != "preferred" then $c.mode else
+      [$m.availableModes[]? | capture("^(?<mode>(?<w>[0-9]+)x(?<h>[0-9]+)@(?<rate>[0-9.]+))(?:Hz)?$")
+        | select((.w | tonumber) == $c.mode_w and (.h | tonumber) == $c.mode_h)] as $modes
+      | ([$modes[] | select((.rate | tonumber | . * 100 | round) == (($m.refreshRate // 0) * 100 | round))][0]
+          // $modes[0]) as $chosen
+      | if $chosen != null then $chosen.mode
+        elif $m.width == $c.mode_w and $m.height == $c.mode_h and ($m.refreshRate // 0) > 0
+          then "\($m.width)x\($m.height)@\($m.refreshRate)"
+        else empty end
+    end'
+}
+
+verify_layout() { # <expected-json>, bounded by the caller.
+  local expected=$1 lv settled=0
+  while :; do
+    if lv=$(timeout -k 1 1 hyprctl monitors all -j 2>/dev/null | head -c 1048576) \
+      && jq -e --argjson expected "$expected" '
+        . as $lv | all($expected[]; . as $e
+          | ([$lv[] | select(.name == $e.output)][0] // null) as $m
+          | if $e.disabled then $m == null or $m.disabled == true
+            else $m != null and $m.disabled != true and $m.width == $e.width and $m.height == $e.height
+              and ((($m.scale // 1) - $e.scale) | fabs) < 0.0001
+              and ($m.transform // 0) == $e.transform and $m.x == $e.x and $m.y == $e.y
+              and ($e.rate == null or (($m.refreshRate * 100 | round) == ($e.rate * 100 | round)))
+            end)
+      ' <<<"$lv" > /dev/null 2>&1; then
+      settled=$((settled + 1))
+      (( settled >= 2 )) && return 0
+    else settled=0; fi
+    sleep 0.2
+  done
+}
+
 # Regenerate the layout file from config + state and reload Hyprland.
 apply() {
   [[ -s $CONFIG_FILE ]] || seed_config
@@ -447,7 +553,8 @@ apply() {
   cfg=$(backfill_geometry "$cfg" "$lv")
   # Never overwrite the user's config with an empty derivation.
   [[ -n $cfg ]] || die "config derivation came back empty; $CONFIG_FILE left untouched"
-  printf '%s\n' "$cfg" | write_file "$CONFIG_FILE"
+  persist_config "$cfg" "$lv"
+  cfg=$(read_config)
 
   boxes=$(layout_boxes "$cfg" "$lv")
   # Overlap pre-flight: Hyprland answers an overlapping layout with
@@ -455,12 +562,13 @@ apply() {
   # rules. Refuse instead, and keep the last known-good generated file.
   collision=$(find_overlap "$boxes")
   [[ -z $collision ]] || die "refusing to apply overlapping layout: $collision (fix with 'monitor-switcher move' or 'pack'; current layout unchanged)"
+  [[ $(jq length <<<"$boxes") -gt 0 ]] || die "refusing a layout with no usable display geometry"
 
   mkdir -p "$TOGGLES_DIR"
   [[ ! -L $TOGGLES_DIR ]] || die "refusing to write into $TOGGLES_DIR: symlink (planted?)"
   # Build the whole file before writing it: write_file stages via mktemp, so
   # the reload below never sources a truncated layout.
-  local entry output live_entry mode scale transform box px py
+  local entry output live_entry mode scale transform box px py expected='[]' mode_size
   local generated="-- GENERATED by monitor-switcher — do not edit.
 -- Edit $CONFIG_FILE instead, then run: monitor-switcher apply"
   while read -r entry; do
@@ -469,15 +577,22 @@ apply() {
     [[ -n $live_entry ]] || continue # not connected; keep settings, skip layout
     if is_disabled "$output"; then
       generated+=$(printf '\nhl.monitor({ output = "%s", disabled = true })' "$output")
+      expected=$(jq --arg o "$output" '. + [{output: $o, disabled: true}]' <<<"$expected")
       continue
     fi
     box=$(jq -c --arg o "$output" '[.[] | select(.output == $o)][0] // empty' <<<"$boxes")
-    [[ -n $box ]] || continue # no computed box; skip rather than misplace
-    mode=$(jq -r '.mode // "preferred"' <<<"$entry")
+    [[ -n $box ]] || die "no trusted geometry for $output; choose an advertised mode first"
+    mode=$(resolved_mode "$entry" "$live_entry")
+    [[ -n $mode ]] || die "no advertised mode matches the saved resolution for $output"
     scale=$(jq -r '.scale // 1' <<<"$entry")
     transform=$(jq -r '.transform // 0' <<<"$entry")
     px=$(jq -r '.x' <<<"$box")
     py=$(jq -r '.y' <<<"$box")
+    mode_size=$(jq -n --arg m "$mode" '$m | capture("^(?<w>[0-9]+)x(?<h>[0-9]+)(@(?<rate>[0-9.]+))?$")')
+    expected=$(jq --arg o "$output" --argjson size "$mode_size" --argjson s "$scale" \
+      --argjson t "$transform" --argjson box "$box" '. + [{output: $o, disabled: false,
+        width: ($size.w | tonumber), height: ($size.h | tonumber), rate: (if $size.rate == null then null else ($size.rate | tonumber) end),
+        scale: $s, transform: $t, x: $box.x, y: $box.y}]' <<<"$expected")
     generated+=$(printf '\nhl.monitor({ output = "%s", mode = "%s", position = "%sx%s", scale = %s, transform = %s })' \
       "$output" "$mode" "$px" "$py" "$scale" "$transform")
   done < <(jq -c '.[]' <<<"$cfg")
@@ -495,7 +610,12 @@ apply() {
     PENDING=$(jq --argjson expires "$(( $(date +%s) + 20 ))" '.expiresAt = $expires' <<<"$PENDING")
     printf '%s\n' "$PENDING" | write_file "$PENDING_FILE"
   fi
-  checked_reload && return 0
+  if checked_reload; then
+    if timeout -k 1 6 bash -o pipefail -c "$(declare -f verify_layout); verify_layout \"\$@\"" _ "$expected"; then
+      return 0
+    fi
+    echo "monitor-switcher: applied layout verification failed (mode, scale, position or power did not match)" >&2
+  fi
   # Refresh owns its full backup/watchdog rollback; ordinary callers restore config/state.
   [[ ${1:-} != refresh ]] || return 1
   if [[ $previous == null ]]; then
@@ -516,8 +636,12 @@ refresh_info() { # <config> <live> <state>; modes come ONLY from advertised stri
          else [($c.mode_w // 0), ($c.mode_h // 0)] end) as $size
       | {output: $c.output, configuredWidth: $size[0], configuredHeight: $size[1],
          transform: ($c.transform // 0),
-         refreshRate: (if $m != null and $m.disabled != true and (($st.disabled // [] | index($c.output)) == null)
-                       then ($m.refreshRate // null) else null end),
+          refreshRate: (if $m != null and $m.disabled != true and ($m.width // 0) > 0 and ($m.height // 0) > 0
+                        then ($m.refreshRate // null) else null end),
+          availableModes: ([$m.availableModes[]? | strings
+            | capture("^(?<mode>(?<w>[0-9]+)x(?<h>[0-9]+)@(?<rate>[0-9]+(?:\\.[0-9]+)?))(?:Hz)?$")
+            | {mode, width: (.w | tonumber), height: (.h | tonumber), rate: (.rate | tonumber)}
+            | select(.width > 0 and .height > 0 and .rate > 0)] | unique_by(.mode)),
          refreshModes: ([$m.availableModes[]? | strings
            | capture("^(?<mode>(?<w>[0-9]+)x(?<h>[0-9]+)@(?<rate>[0-9]+(?:\\.[0-9]+)?))(?:Hz)?$")
            | select((.w | tonumber) == $size[0] and (.h | tonumber) == $size[1])
@@ -540,7 +664,9 @@ state_json() {
     cfg=$(adopt_new "$lv" <<<"$cfg")
     cfg=$(backfill_geometry "$cfg" "$lv")
     [[ -n $cfg ]] || die "config derivation came back empty; $CONFIG_FILE left untouched"
-    printf '%s\n' "$cfg" | write_file "$CONFIG_FILE"
+    persist_config "$cfg" "$lv"
+    cfg=$(read_config)
+    st=$(read_state)
   fi
   refresh=$(refresh_info "$cfg" "$lv" "$st")
   jq -n --argjson cfg "$cfg" --argjson lv "$lv" --argjson st "$st" \
@@ -569,18 +695,28 @@ state_json() {
           num: ($i + 1),
           output: $c.output,
           alias: ($c.alias // $c.output),
-          scale: ($c.scale // 1),
+           scale: (if $m != null and $m.disabled != true and ($m.width // 0) > 0 and ($m.height // 0) > 0 then ($m.scale // 1) else null end),
+           configuredScale: ($c.scale // 1),
+           liveTransform: ($m.transform // 0),
           mode: ($c.mode // "preferred"),
           position: ($c.position // null),
           connected: ($m != null),
-          enabled: (($m != null) and ($m.disabled != true)
-                    and ([$st.disabled[] | select(. == $c.output)] | length == 0)),
-          focused: (($m.focused == true) and ($m.disabled != true)),
+           enabled: (($m != null) and ($m.disabled != true)),
+           desiredEnabled: (($st.disabled // [] | index($c.output)) == null),
+           usable: ($m != null and $m.disabled != true and ($m.width // 0) > 0 and ($m.height // 0) > 0
+                    and $m.dpmsStatus != false and ($m.mirrorOf // "none") == "none"),
+           status: (if $m == null then "Disconnected" elif $m.disabled == true then "Off"
+                    elif ($m.width // 0) <= 0 or ($m.height // 0) <= 0 then "No active mode"
+                    elif $m.dpmsStatus == false then "Asleep" else "On" end),
+           focused: (($m.focused == true) and ($m.disabled != true) and ($m.width // 0) > 0 and ($m.height // 0) > 0),
+           dpmsStatus: ($m.dpmsStatus // false),
           x: (if $m != null then ($m.x // 0) else 0 end),
           y: (if $m != null then ($m.y // 0) else 0 end),
           width: ($m.width // 0),
           height: ($m.height // 0),
-          inches: $in,
+           inches: $in,
+           physicalWidth: ($m.physicalWidth // 0),
+           physicalHeight: ($m.physicalHeight // 0),
           kind: (if $m != null then kind_of($m; $in) else "monitor" end)
         } + ($refresh[] | select(.output == $c.output))
     ] as $monitors
@@ -590,8 +726,9 @@ state_json() {
          | . as $m | (lsz($m)) as $s
          | {output: $m.name, x: ($m.x // 0), y: ($m.y // 0), w: $s[0], h: $s[1]} ]) as $boxes
     | { monitors: $monitors,
-        refreshPending: ($pending | if . == null then null else {token, output, mode, expiresAt, reverting: (.reverting // false)} end),
-        enabledCount: ([$monitors[] | select(.enabled)] | length),
+         refreshPending: ($pending | if . == null then null else {token, output, mode, expiresAt, reverting: (.reverting // false)}
+           + (if .mode == "arrangement" then {kind: "arrangement"} else {} end) end),
+         enabledCount: ([$monitors[] | select(.usable)] | length),
         overlaps: ([$boxes | combinations(2)
                     | select(.[0].output < .[1].output)
                     | select(.[0].x < .[1].x + .[1].w and .[1].x < .[0].x + .[0].w
@@ -623,20 +760,22 @@ cmd_toggle() { # <id> <on|off|toggle>
   jq -e --arg o "$output" 'any(.[]; .name == $o)' <<<"$lv" > /dev/null \
     || die "$output is not connected"
 
-  local currently next
-  if is_disabled "$output"; then currently=off; else currently=on; fi
+  local currently next backup
+  backup=$(read_state)
+  if jq -e --arg o "$output" 'any(.[]; .name == $o and .disabled != true)' <<<"$lv" > /dev/null; then currently=on; else currently=off; fi
   case $action in
     toggle) [[ $currently == on ]] && next=off || next=on ;;
     on)  next=on ;;
     off) next=off ;;
   esac
 
-  if [[ $next == off && $currently == on ]]; then
+  if [[ $next == off ]]; then
     # Never kill the last enabled, connected display.
     local enabled_others=0 name
     while read -r name; do
       if [[ $name != "$output" ]] \
-         && jq -e --arg n "$name" '.[] | select(.name == $n and (.disabled != true))' <<<"$lv" > /dev/null \
+         && jq -e --arg n "$name" '.[] | select(.name == $n and .disabled != true and .width > 0 and .height > 0
+              and .dpmsStatus != false and (.mirrorOf // "none") == "none")' <<<"$lv" > /dev/null \
          && ! is_disabled "$name"; then
         enabled_others=$((enabled_others + 1))
       fi
@@ -649,7 +788,7 @@ cmd_toggle() { # <id> <on|off|toggle>
   if ! (apply); then
     # apply refused the layout (its message says why): state.json must not
     # claim a change that never happened — roll the flag back.
-    if [[ $next == off ]]; then set_disabled "$output" false; else set_disabled "$output" true; fi
+    printf '%s\n' "$backup" | write_file "$STATE_FILE"
     die "toggle failed; state left unchanged"
   fi
 
@@ -672,7 +811,7 @@ prepare() {
   cfg=$(read_config | adopt_new "$lv")
   cfg=$(backfill_geometry "$cfg" "$lv")
   [[ -n $cfg ]] || die "config derivation came back empty; $CONFIG_FILE left untouched"
-  printf '%s\n' "$cfg" | write_file "$CONFIG_FILE"
+  persist_config "$cfg" "$lv"
   printf '%s\n' "$lv"
 }
 
@@ -808,6 +947,23 @@ cmd_scale() { # <id> <factor>
   echo "$alias ($output) scale $clean"
 }
 
+cmd_focus() {
+  local output lv reply
+  output=$(resolve "$1")
+  [[ -n $output ]] || die "unknown monitor: $1"
+  lv=$(live)
+  jq -e --arg o "$output" 'any(.[]; .name == $o and .disabled != true and .width > 0 and .height > 0
+    and .dpmsStatus != false and (.mirrorOf // "none") == "none")' <<<"$lv" > /dev/null \
+    || die "$output has no usable desktop to focus; enable it or restore its mode first"
+  # Lua-based Hyprland dispatchers are typed closures, not legacy command strings.
+  reply=$(bounded_hyprctl eval "hl.dispatch(hl.dsp.focus({monitor = \"$output\"}))")
+  [[ $reply == ok ]] || die "could not focus $output: $reply"
+  lv=$(live)
+  jq -e --arg o "$output" 'any(.[]; .name == $o and .focused == true)' <<<"$lv" > /dev/null \
+    || die "$output did not receive desktop focus"
+  echo "$output focused"
+}
+
 cmd_plan() { # [--json]
   local lv boxes collision
   lv=$(prepare)
@@ -822,24 +978,6 @@ cmd_plan() { # [--json]
   [[ -z $collision ]] || echo "WARNING: layout would overlap: $collision" >&2
 }
 
-verify_refresh_mode() { # Invoked under an overall five-second timeout.
-  local output=$1 width=$2 height=$3 rate=$4 lv settled=0
-  while :; do
-    if lv=$(timeout -k 1 1 hyprctl monitors all -j 2>/dev/null | head -c 1048576) \
-      && jq -e --arg o "$output" --argjson w "$width" --argjson h "$height" --argjson r "$rate" '
-        any(.[]; .name == $o and .disabled != true and .width == $w and .height == $h
-            and (.refreshRate | type == "number")
-            and ((.refreshRate * 100 | round) == ($r * 100 | round)))
-      ' <<<"$lv" >/dev/null 2>&1; then
-      settled=$((settled + 1))
-      (( settled >= 2 )) && return 0
-    else
-      settled=0
-    fi
-    sleep 0.2
-  done
-}
-
 refresh_exit() {
   local status=$1
   trap - EXIT HUP INT TERM
@@ -850,27 +988,90 @@ refresh_exit() {
   exit "$status"
 }
 
-cmd_refresh() { # <id> <Hz>
-  local id=$1 rate=$2 output cfg lv st info mode newcfg collision token generated backup
-  [[ $rate =~ ^[0-9]+([.][0-9]+)?$ ]] || die "refresh rate must be a positive number (got: $rate)"
-  rate=$(jq -en --arg r "$rate" '$r | tonumber | select(isfinite and . > 0)') \
-    || die "refresh rate must be a positive finite number"
+cmd_refresh() { # <id> <value> [refresh|mode|scale] — shared watchdog transaction
+  local id=$1 value=$2 kind=${3:-refresh} rate output cfg lv st info mode newcfg collision clean
+  if [[ $kind == refresh ]]; then
+    [[ $value =~ ^[0-9]+([.][0-9]+)?$ ]] || die "refresh rate must be a positive number (got: $value)"
+    rate=$(jq -en --arg r "$value" '$r | tonumber | select(isfinite and . > 0)') \
+      || die "refresh rate must be a positive finite number"
+  fi
   cfg=$(read_config)
   output=$(resolve "$id")
   [[ -n $output ]] || die "unknown monitor: $id"
   lv=$(live)
   st=$(read_state)
-  jq -e --arg o "$output" --argjson st "$st" '
-    any(.[]; .name == $o and .disabled != true and .width > 0 and .height > 0)
+  jq -e --arg o "$output" --arg kind "$kind" --argjson st "$st" '
+    any(.[]; .name == $o and .disabled != true and ($kind == "mode" or (.width > 0 and .height > 0)))
     and (($st.disabled // [] | index($o)) == null)
   ' <<<"$lv" > /dev/null || die "$output must be connected and active to change refresh rate"
   info=$(refresh_info "$cfg" "$lv" "$st" | jq -c --arg o "$output" '.[] | select(.output == $o)')
-  mode=$(jq -r --argjson r "$rate" '.refreshModes[] | select(.rate == $r) | .mode' <<<"$info")
-  [[ -n $mode ]] || die "$rate Hz is not advertised at the configured resolution for $output"
-  newcfg=$(jq --arg o "$output" --arg m "$mode" \
-    'map(if .output == $o then .mode = $m | del(.mode_w, .mode_h) else . end)' <<<"$cfg")
+  case $kind in
+    refresh)
+      mode=$(jq -r --argjson r "$rate" '.refreshModes[] | select(.rate == $r) | .mode' <<<"$info")
+      [[ -n $mode ]] || die "$rate Hz is not advertised at the configured resolution for $output"
+      ;;
+    mode)
+      mode=$(jq -r --arg m "$value" '.availableModes[] | select(.mode == $m) | .mode' <<<"$info")
+      [[ -n $mode ]] || die "$value is not an advertised mode for $output"
+      ;;
+    scale)
+      [[ $value =~ ^[0-9]+([.][0-9]+)?$ ]] \
+        && jq -en --arg s "$value" '$s | tonumber | select(isfinite and . >= 0.25 and . <= 5)' > /dev/null \
+        || die "scale must be a number between 0.25 and 5"
+      mode=$(resolved_mode "$(jq -c --arg o "$output" '.[] | select(.output == $o)' <<<"$cfg")" \
+        "$(jq -c --arg o "$output" '.[] | select(.name == $o)' <<<"$lv")")
+      ;;
+  esac
+  info=$(jq --arg m "$mode" '. + ($m | capture("^(?<w>[0-9]+)x(?<h>[0-9]+)@(?<r>[0-9.]+)$")
+    | {configuredWidth: (.w | tonumber), configuredHeight: (.h | tonumber), rate: (.r | tonumber)})' <<<"$info")
+  rate=$(jq -r .rate <<<"$info")
+  clean=$(jq -r --arg o "$output" '.[] | select(.output == $o) | .scale // 1' <<<"$cfg")
+  [[ $kind != scale ]] || clean=$value
+  clean=$(clean_scale "$clean" "$(jq -r .configuredWidth <<<"$info")" "$(jq -r .configuredHeight <<<"$info")")
+  newcfg=$(jq --arg o "$output" --arg m "$mode" --argjson s "$clean" \
+    'map(if .output == $o then .mode = $m | .scale = $s | del(.mode_w, .mode_h) else . end)' <<<"$cfg")
   collision=$(find_overlap "$(layout_boxes "$newcfg" "$lv")")
   [[ -z $collision ]] || die "refusing to apply overlapping layout: $collision"
+  start_trial "$newcfg" "$output" "$mode"
+}
+
+cmd_arrange() { # All active displays move together; no intermediate overlaps.
+  local positions=$1 lv cfg newcfg boxes collision output
+  jq -e '
+    type == "array" and length >= 2 and length <= 64
+    and all(.[]; type == "object" and (.output | type == "string")
+      and all(.x, .y; type == "number" and isfinite and . == floor and . >= -100000 and . <= 100000))
+    and (map(.output) | length == (unique | length))
+  ' <<<"$positions" > /dev/null 2>&1 || die "arrangement requires unique {output,x,y} entries with integer positions for at least two active displays"
+  lv=$(live)
+  cfg=$(read_config)
+  jq -e --argjson p "$positions" --argjson cfg "$cfg" --argjson st "$(read_state)" '
+    ([.[] | select(.disabled != true and .width > 0 and .height > 0 and .dpmsStatus != false
+      and (.mirrorOf // "none") == "none") | .name] | sort) as $active
+    | ($p | map(.output) | sort) == $active
+      and all($p[]; .output as $o | any($cfg[]; .output == $o) and (($st.disabled // [] | index($o)) == null))
+  ' <<<"$lv" > /dev/null || die "active displays changed; reopen Arrange and include every active display"
+  newcfg=$(jq --argjson p "$positions" 'map(. as $c | ([$p[] | select(.output == $c.output)][0] // null) as $pos
+    | if $pos != null then .position = "\($pos.x)x\($pos.y)" else . end)' <<<"$cfg")
+  boxes=$(layout_boxes "$newcfg" "$lv")
+  collision=$(find_overlap "$boxes")
+  [[ -z $collision ]] || die "refusing to apply overlapping layout: $collision"
+  jq -e '
+    def touches($a; $b):
+      ((($a.x + $a.w == $b.x) or ($b.x + $b.w == $a.x)) and
+        ([$a.y + $a.h, $b.y + $b.h] | min) > ([$a.y, $b.y] | max)) or
+      ((($a.y + $a.h == $b.y) or ($b.y + $b.h == $a.y)) and
+        ([$a.x + $a.w, $b.x + $b.w] | min) > ([$a.x, $b.x] | max));
+    . as $boxes | reduce range(0; length) as $i ([$boxes[0]];
+      . as $seen | $seen + [$boxes[] as $b | select(any($seen[]; touches(.; $b))) | $b] | unique_by(.output))
+    | length == ($boxes | length)
+  ' <<<"$boxes" > /dev/null || die "display edges must touch so the pointer can move between screens"
+  output=$(jq -r '[.[] | select(.focused == true)][0].name // .[0].name' <<<"$lv")
+  start_trial "$newcfg" "$output" arrangement
+}
+
+start_trial() { # <new-config> <output> <mode-or-arrangement>
+  local newcfg=$1 output=$2 mode=$3 token generated backup
 
   guard_path "$GENERATED_FILE" || die "refusing unsafe generated layout path"
   generated=null
@@ -891,10 +1092,8 @@ cmd_refresh() { # <id> <Hz>
   trap 'exit 143' TERM
   launch_watchdog "$token"
   printf '%s\n' "$newcfg" | write_file "$CONFIG_FILE"
+  # apply verifies all affected modes, scales, transforms, positions and power.
   apply refresh
-  timeout -k 1 5 bash -o pipefail -c "$(declare -f verify_refresh_mode); verify_refresh_mode \"\$@\"" _ \
-    "$output" "$(jq -r .configuredWidth <<<"$info")" "$(jq -r .configuredHeight <<<"$info")" "$rate" \
-    || die "active mode verification failed for $output ($mode)"
   trap - EXIT HUP INT TERM
   echo "$output refresh $mode pending; confirm $token by $(jq -r .expiresAt <<<"$PENDING") (20-second automatic rollback)"
 }
@@ -948,9 +1147,13 @@ case "${1:-}" in
   enable)  [[ $# -eq 2 ]] || usage; cmd_toggle "$2" on ;;
   disable) [[ $# -eq 2 ]] || usage; cmd_toggle "$2" off ;;
   move)    [[ $# -ge 3 && $# -le 4 ]] || usage; cmd_move "$2" "$3" "${4:-}" ;;
+  arrange) [[ $# -eq 2 ]] || usage; cmd_arrange "$2" ;;
   swap)    [[ $# -eq 3 ]] || usage; cmd_swap "$2" "$3" ;;
   pack)    cmd_pack ;;
   scale)   [[ $# -eq 3 ]] || usage; cmd_scale "$2" "$3" ;;
+  focus)   [[ $# -eq 2 ]] || usage; cmd_focus "$2" ;;
+  mode)    [[ $# -eq 3 ]] || usage; cmd_refresh "$2" "$3" mode ;;
+  scale-trial) [[ $# -eq 3 ]] || usage; cmd_refresh "$2" "$3" scale ;;
   refresh) [[ $# -eq 3 ]] || usage; cmd_refresh "$2" "$3" ;;
   confirm) [[ $# -eq 2 ]] || usage; cmd_confirm "$2" ;;
   revert)  [[ $# -eq 2 ]] || usage; restore_refresh "$2" ;;

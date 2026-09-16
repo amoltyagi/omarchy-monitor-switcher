@@ -14,7 +14,7 @@ const advertised = [
 ];
 
 // Never delegates to a real hyprctl. Every invocation requires the sandbox marker
-// and one of three exact argument lists; all other commands fail closed.
+// and a small allowlist; all other commands fail closed.
 const stub = `#!${process.execPath}
 const fs = require('node:fs');
 const path = require('node:path');
@@ -52,12 +52,28 @@ if (args === 'monitors all -j') {
   }
   if (changing && control.failure === 'rejection') { console.log('error: unsupported mode'); process.exit(0); }
   const live = JSON.parse(fs.readFileSync(liveFile, 'utf8'));
-  if (mode && control.failure !== 'verify') {
-    const monitor = live.find(m => m.name === 'DP-1');
-    monitor.width = Number(mode[1]); monitor.height = Number(mode[2]);
-    monitor.refreshRate = Number(mode[3]) + (control.rateOffset || 0);
-    if (text.startsWith('-- GENERATED') && control.liveRate !== undefined) monitor.refreshRate = control.liveRate;
-    if (changing && control.failure === 'resolution') monitor.width = 1920;
+  for (const line of text.split('\\n')) {
+    const name = line.match(/output = "([A-Za-z0-9_.-]+)"/);
+    const monitor = name && live.find(m => m.name === name[1]);
+    if (!monitor) continue;
+    if (line.includes('disabled = true')) {
+      if (!control.ignorePower) { monitor.disabled = true; monitor.width = monitor.height = 0; }
+      continue;
+    }
+    const m = line.match(/mode = "([0-9]+)x([0-9]+)@([0-9.]+)"/);
+    const p = line.match(/position = "(-?[0-9]+)x(-?[0-9]+)"/);
+    const s = line.match(/scale = ([0-9.]+)/);
+    const t = line.match(/transform = ([0-9]+)/);
+    if (m && control.failure !== 'verify') {
+      monitor.width = Number(m[1]); monitor.height = Number(m[2]);
+      monitor.refreshRate = Number(m[3]) + (monitor.name === 'DP-1' ? control.rateOffset || 0 : 0);
+      if (monitor.name === 'DP-1' && text.startsWith('-- GENERATED') && control.liveRate !== undefined) monitor.refreshRate = control.liveRate;
+      if (changing && control.failure === 'resolution' && monitor.name === 'DP-1') monitor.width = 1920;
+    }
+    if (!control.ignorePower) monitor.disabled = false;
+    if (p && !control.ignorePosition) { monitor.x = Number(p[1]); monitor.y = Number(p[2]); }
+    if (s && !control.ignoreScale) monitor.scale = Number(s[1]);
+    if (t) monitor.transform = Number(t[1]);
   }
   fs.writeFileSync(liveFile, JSON.stringify(live));
   fs.appendFileSync(path.join(home, 'applied-layouts'), JSON.stringify(layout) + '\\n');
@@ -66,6 +82,11 @@ if (args === 'monitors all -j') {
   const text = fs.existsSync(lua) ? fs.readFileSync(lua, 'utf8') : '';
   const changing = text.includes('@240.00') || (control.failGenerated && text.startsWith('-- GENERATED'));
   console.log(JSON.stringify(control.failure === 'configerrors' && changing ? ['stub invalid mode'] : (control.configerrors ?? [])));
+} else if (args === 'eval hl.dispatch(hl.dsp.focus({monitor = "DP-1"}))' || args === 'eval hl.dispatch(hl.dsp.focus({monitor = "DP-2"}))') {
+  const live = JSON.parse(fs.readFileSync(liveFile, 'utf8'));
+  for (const m of live) m.focused = m.name === (args.includes('"DP-1"') ? 'DP-1' : 'DP-2');
+  fs.writeFileSync(liveFile, JSON.stringify(live));
+  console.log('ok');
 } else { console.error('FORBIDDEN hyprctl invocation: ' + args); process.exit(98); }
 `;
 
@@ -698,4 +719,162 @@ test('malformed and oversized pending transactions fail closed, including state'
     }
     await f.unchanged();
   }
+});
+
+test('an enabled modeless display stays visible and can be recovered without losing the healthy display', async t => {
+  const f = await fixture(t);
+  f.live[1] = { ...f.live[1], width: 0, height: 0, scale: 1, dpmsStatus: true };
+  await writeFile(path.join(f.home, 'live.json'), JSON.stringify(f.live));
+  const state = JSON.parse((await f.ok('state', '--json')).stdout);
+  assert.equal(state.monitors.length, 2);
+  assert.equal(state.enabledCount, 1);
+  assert.equal(state.monitors[1].status, 'No active mode');
+  assert.equal(state.monitors[1].enabled, true);
+  assert.equal(state.monitors[1].usable, false);
+  assert.equal(state.monitors[1].scale, null);
+  assert.equal(state.monitors[1].refreshRate, null);
+  assert.equal(state.monitors[1].configuredWidth, 1920);
+  assert.match((await f.run('disable', 'DP-1')).stderr, /last active display/);
+  assert.match((await f.run('focus', 'DP-2')).stderr, /no usable desktop/);
+  await f.ok('apply');
+  const recovered = JSON.parse((await f.ok('state', '--json')).stdout);
+  assert.equal(recovered.enabledCount, 2);
+  assert.equal(recovered.monitors[1].width, 1920);
+  await f.ok('focus', 'DP-2');
+  assert.equal((await f.json(path.join(f.home, 'live.json')))[1].focused, true);
+});
+
+test('modeless output can be disabled; externally disabled output toggles on', async t => {
+  const f = await fixture(t);
+  f.live[1].width = f.live[1].height = 0;
+  await writeFile(path.join(f.home, 'live.json'), JSON.stringify(f.live));
+  await f.ok('disable', 'DP-2');
+  assert.deepEqual((await f.json(path.join(f.stateDir, 'state.json'))).disabled, ['DP-2']);
+  await writeFile(path.join(f.stateDir, 'state.json'), JSON.stringify({ disabled: [] }));
+  await f.ok('toggle', 'DP-2');
+  assert.equal((await f.json(path.join(f.home, 'live.json')))[1].disabled, false);
+});
+
+test('duplicate outputs fail clearly without multiplying metadata or writing rules', async t => {
+  const f = await fixture(t);
+  const config = JSON.stringify([...f.monitors, { ...f.monitors[1], alias: 'Duplicate' }]);
+  await writeFile(f.config, config);
+  for (const command of [['state', '--json'], ['enable', 'DP-2'], ['apply']]) {
+    assert.match((await f.run(...command)).stderr, /duplicate monitor outputs: DP-2/);
+    assert.equal(await readFile(f.config, 'utf8'), config);
+    assert.equal(await readFile(f.generated, 'utf8'), f.originalLua);
+  }
+});
+
+test('hardware reconnection preserves order, settings and off-state; FALLBACK is not adopted', async t => {
+  const f = await fixture(t, { disabled: ['DP-2'] });
+  const identity = { make: 'Acer', model: 'PE270K', serial: 'unique-serial' };
+  f.monitors[1].identity = identity;
+  await writeFile(f.config, JSON.stringify(f.monitors));
+  f.live[1] = { ...f.live[1], ...identity, name: 'HDMI-A-1', disabled: true, width: 0, height: 0 };
+  f.live.push({ name: 'FALLBACK', width: 1920, height: 1080, scale: 1 });
+  await writeFile(path.join(f.home, 'live.json'), JSON.stringify(f.live));
+  const state = JSON.parse((await f.ok('state', '--json')).stdout);
+  assert.equal(state.monitors.length, 2);
+  assert.equal(state.monitors[1].num, 2);
+  assert.equal(state.monitors[1].output, 'HDMI-A-1');
+  assert.equal(state.monitors[1].alias, 'Side');
+  assert.deepEqual((await f.json(path.join(f.stateDir, 'state.json'))).disabled, ['HDMI-A-1']);
+  assert.equal((await f.json(f.config))[1].previousOutput, undefined);
+});
+
+test('disabled newly discovered monitor gets advertised geometry rather than a zero snapshot', async t => {
+  const f = await fixture(t);
+  f.live.push({ name: 'HDMI-A-1', disabled: true, width: 0, height: 0, scale: 1,
+    availableModes: ['2560x1440@59.95Hz'] });
+  await writeFile(path.join(f.home, 'live.json'), JSON.stringify(f.live));
+  const state = JSON.parse((await f.ok('state', '--json')).stdout);
+  assert.equal(state.monitors[2].configuredWidth, 2560);
+  assert.equal(state.monitors[2].configuredHeight, 1440);
+});
+
+test('live scale and configured scale are reported separately', async t => {
+  const f = await fixture(t);
+  f.live[0].scale = 2;
+  await writeFile(path.join(f.home, 'live.json'), JSON.stringify(f.live));
+  const state = JSON.parse((await f.ok('state', '--json')).stdout);
+  assert.equal(state.monitors[0].scale, 2);
+  assert.equal(state.monitors[0].configuredScale, 1.5);
+});
+
+for (const [verb, target, disabled] of [['enable', 'DP-2', []], ['disable', 'DP-2', ['DP-2']]]) {
+  test(`failed redundant ${verb} restores exact previous power intent`, async t => {
+    const f = await fixture(t, { disabled, control: { failure: 'reload', failGenerated: true } });
+    assert.notEqual((await f.run(verb, target)).code, 0);
+    assert.deepEqual((await f.json(path.join(f.stateDir, 'state.json'))).disabled, disabled);
+  });
+}
+
+for (const [control, command] of [[{ ignoreScale: true }, ['scale', 'Main', '2']],
+  [{ ignorePower: true }, ['disable', 'DP-2']], [{ ignorePosition: true }, ['move', 'DP-2', '2000x0']]]) {
+  test(`accepted reload must actually apply ${command[0]}`, async t => {
+    const f = await fixture(t, { control });
+    assert.match((await f.run(...command)).stderr, /verification failed/);
+    assert.deepEqual(await f.json(f.config), f.monitors);
+    assert.equal(await readFile(f.generated, 'utf8'), f.originalLua);
+    assert.deepEqual((await f.json(path.join(f.stateDir, 'state.json'))).disabled, []);
+  });
+}
+
+test('resolution and scale trials use exact advertised modes and the shared rollback watchdog', async t => {
+  const f = await fixture(t);
+  await f.ok('mode', 'Main', '1920x1080@360.00');
+  let pending = await f.json(f.pending);
+  assert.equal((await f.json(f.config))[0].mode, '1920x1080@360.00');
+  await f.ok('revert', pending.token);
+  await f.unchanged();
+  await f.ok('scale-trial', 'Main', '1.875');
+  pending = await f.json(f.pending);
+  assert.equal((await f.json(f.config))[0].scale, 1.875);
+  await f.ok('revert', pending.token);
+  await f.unchanged();
+  assert.match((await f.run('mode', 'Main', '640x480@999')).stderr, /not an advertised mode/);
+});
+
+test('arrangement swaps every active display atomically, verifies positions and can revert byte for byte', async t => {
+  const f = await fixture(t);
+  const positions = [{ output: 'DP-1', x: 1920, y: 0 }, { output: 'DP-2', x: 0, y: 0 }];
+  await f.ok('arrange', JSON.stringify(positions));
+  const pending = await f.json(f.pending);
+  assert.equal(pending.mode, 'arrangement');
+  const state = JSON.parse((await f.ok('state', '--json')).stdout);
+  assert.equal(state.refreshPending.kind, 'arrangement');
+  assert.equal(state.monitors[0].x, 1920);
+  assert.equal(state.monitors[1].x, 0);
+  const cfg = await f.json(f.config);
+  assert.equal(cfg[0].position, '1920x0');
+  assert.equal(cfg[0].scale, f.monitors[0].scale);
+  assert.equal(cfg[0].transform, f.monitors[0].transform);
+  await f.ok('revert', pending.token);
+  await f.unchanged();
+});
+
+test('arrangement rejects overlaps, disconnected islands, corner-only contact, stale displays and malformed positions', async t => {
+  const f = await fixture(t);
+  for (const positions of [[], [{ output: 'DP-1', x: 0, y: 0 }],
+    [{ output: 'DP-1', x: 0, y: 0 }, { output: 'DP-1', x: 1440, y: 0 }],
+    [{ output: 'DP-1', x: 0, y: 0 }, { output: 'MISSING', x: 1440, y: 0 }],
+    [{ output: 'DP-1', x: 0.5, y: 0 }, { output: 'DP-2', x: 1440, y: 0 }],
+    [{ output: 'DP-1', x: 0, y: 0 }, { output: 'DP-2', x: 1000, y: 0 }],
+    [{ output: 'DP-1', x: 0, y: 0 }, { output: 'DP-2', x: 3000, y: 0 }],
+    [{ output: 'DP-1', x: 0, y: 0 }, { output: 'DP-2', x: 1440, y: 2560 }],
+  ]) {
+    assert.notEqual((await f.run('arrange', JSON.stringify(positions))).code, 0);
+    await f.unchanged();
+    await f.noPending();
+  }
+  assert.doesNotMatch(await readFile(path.join(f.home, 'calls'), 'utf8'), /reload/);
+});
+
+test('arrangement rejects accepted-but-ineffective compositor positioning and restores the layout', async t => {
+  const f = await fixture(t, { control: { ignorePosition: true } });
+  const result = await f.run('arrange', JSON.stringify([{ output: 'DP-1', x: 1920, y: 0 }, { output: 'DP-2', x: 0, y: 0 }]));
+  assert.match(result.stderr, /verification failed/);
+  await f.unchanged();
+  await f.noPending();
 });

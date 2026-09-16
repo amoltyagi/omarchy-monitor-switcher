@@ -1,58 +1,36 @@
 <img src="logo.svg" alt="Monitor Switcher logo" width="88" height="88">
 
-# Monitor Switcher
+# Monitor Switcher 3
 
-**Your displays, in one place. Settings that stay put.**
+## Your desk. In order.
 
-A keyboard-friendly display control center for [Omarchy](https://omarchy.org).
-Turn monitors on and off directly from a visual gallery, see their actual
-refresh rates, and adjust brightness, text size and scale without leaving the
-panel. Monitor settings persist across Hyprland reloads and reboots.
+A major redesign of the monitor panel for [Omarchy](https://omarchy.org).
 
-<img src="preview.png" alt="Monitor Switcher 2.6.1: branded panel with MSI at 3840x2160 and 240 Hz, gallery On/Off controls, stepped sliders and keyboard shortcut footer" width="440">
+<img src="preview.png" alt="Monitor Switcher 3 — Your desk. In order. The redesigned display panel with clickable settings and power switches." width="1000">
 
-*Actual panel capture: MSI 4K OLED at 240 Hz alongside LG and Acer displays.
-Colors and typography follow the active Omarchy theme.*
+- **Click to edit.** Resolution, refresh and scale sit right on each display.
+- **Switch it on.** A simple power toggle beneath every monitor.
+- **Drag to arrange.** Snap screens together to match your desk.
+- **Try it first.** Verified changes with 20-second Keep / Revert.
+- **Keep it simple.** The original shortcut stays. More shortcuts opens the rest.
 
-The original [logo](logo.svg) is also used in the bar and panel header as a
-theme-tinted vector. It is included with the plugin; it does not depend on a
-font glyph or a marketplace-provided icon.
+Settings persist across reloads and reboots. Colors follow your theme.
+[Release notes](RELEASE-NOTES.md) · [Changelog](CHANGELOG.md)
+
+## A place for every display.
+
+Drag screens into position, or choose left, right, above or below. Preview the
+layout, apply it, and keep it only when it feels right.
+
+<img src="preview-detail.png" alt="The new arrangement view: drag-and-snap positioning, directional controls and a preview before applying changes." width="1000">
+
+[Main panel screenshot](assets/screenshots/displays.png) · [Arrangement screenshot](assets/screenshots/arrangement.png)
 
 This is an **unofficial fork** of Omarchy's `omarchy.monitor` widget, originally
 vendored from Omarchy 4.0.0 under MIT. It is not affiliated with or supported by
 Omarchy. Please report plugin issues to
 [this repository](https://github.com/amoltyagi/omarchy-monitor-switcher/issues).
 See [UPSTREAM.md](UPSTREAM.md) for attribution and maintenance notes.
-
-## Features
-
-- **Monitor gallery:** proportioned screen illustrations, shortcut numbers,
-  aliases, physical sizes, resolutions, scale and live Hz. On/Off buttons sit
-  directly beneath each screen; there is no duplicate list to scroll to.
-- **Persistent switching:** off states and per-monitor settings survive config
-  reloads and reboots. The last active display cannot be switched off.
-- **Supported refresh steps:** choose only rates advertised at the configured
-  resolution, including fractional rates. A large readout shows the running mode.
-- **20-second Keep/Revert trials:** refresh changes are verified against the
-  compositor. An independent watchdog restores the previous configuration and
-  generated layout if you do not confirm, even if the panel or shell closes.
-- **Consistent sliders:** brightness, stepped text size and stepped scale share
-  one visual language. Scale retains custom current values such as 187.5%.
-- **No accidental wheel edits:** click, drag or use the keyboard to change a
-  setting. Wheel gestures scroll the panel; scrolling the bar icon does nothing.
-- **Keyboard-first controls:** arrow keys or `hjkl`, Enter/Space, and optional
-  `SUPER+SHIFT+CTRL+1...N` monitor shortcuts. The shortcut hint stays in the footer.
-- **Layout memory:** enabled screens pack in config order or use pinned
-  positions. Overlapping layouts are rejected before they reach Hyprland.
-- **One backend:** gallery actions, CLI commands and keybindings share the same
-  persistent state and validation.
-
-<details>
-<summary>Gallery and 240 Hz refresh control, close up</summary>
-
-<img src="preview-detail.png" alt="Numbered MSI, LG and Acer gallery with direct On/Off buttons and 60, 120, 180 and 240 Hz refresh steps" width="660">
-
-</details>
 
 ## Install
 
@@ -69,9 +47,10 @@ layout. Restore the built-in widget with `omarchy plugin enable omarchy.monitor`
 The two plugins have separate IPC targets, but the built-in widget's runtime-only
 changes can conflict with this plugin's persisted settings.
 
-On first use, the plugin adopts connected monitors and their current scale.
-Refresh defaults to the monitor's **preferred** mode, which is not necessarily
-its highest rate. Use the refresh slider to choose a higher supported rate.
+On first use, the plugin adopts connected monitors and their current geometry
+and scale. Preferred-mode entries resolve to an advertised mode matching that
+geometry, preserving the running refresh rate when possible. Use the Hz chip to
+choose a different advertised rate.
 
 ## Use the Panel
 
@@ -79,19 +58,21 @@ Click the monitor icon in the bar to open the panel.
 
 | Control | Behavior |
 |---|---|
-| Gallery On/Off | Persistently toggle that monitor; the last active screen is protected |
-| Refresh rate | Drag to preview, release to try, then Keep within 20 seconds |
+| Monitor screen | Focus that desktop; editing a setting never changes its target |
+| On/Off switch | Persistently toggle that monitor; the last usable screen is protected |
+| Resolution / Hz / scale chip | Click, choose a supported value, then Keep within 20 seconds |
+| Arrange… | Preview positions by dragging or using placement buttons, then Apply |
 | Brightness | Adjust the focused monitor when brightness control is available |
 | Text size | Adjust shell/GTK text size through Omarchy's text-size command |
-| Scale | Preview a step and release to apply it to the focused monitor |
+| More shortcuts | Expand optional keyboard guidance; `?` also toggles it |
 | Wheel/touchpad scroll | Scroll the panel without changing values |
 
-The gallery identifies the focused screen. Refresh, brightness and scale target
-that screen. The live Hz readout describes the compositor's display mode,
-**not measured application FPS**. Refresh changes preserve resolution, scale,
-position and rotation.
+Each chip targets its own monitor, even when another desktop has focus.
+Brightness targets the focused monitor. Hz describes the compositor's display
+mode, **not measured application FPS**. Off/modeless screens identify saved
+settings explicitly instead of presenting them as live values.
 
-During a refresh trial, other layout changes are blocked. **Keep** saves the
+During a display trial, other layout changes are blocked. **Keep** saves the
 choice; **Revert** restores the previous configuration immediately. Failed
 rollback reloads are retried. If a watchdog is interrupted, the next backend
 invocation recovers its expired trial.
@@ -100,11 +81,19 @@ invocation recovers its expired trial.
 
 | Key | Action |
 |---|---|
-| Up/Down or `k`/`j` | Move through gallery buttons and control sections |
-| Left/Right or `h`/`l` | Walk buttons, adjust brightness/text size, or preview scale/refresh steps |
-| Enter/Space | Toggle the highlighted monitor, apply a preview, or activate Keep/Revert |
-| Escape | Close the panel; an unconfirmed refresh trial still reverts |
+| Up/Down or `k`/`j` | Select displays, controls or picker options |
+| Left/Right or `h`/`l` | Walk selections or adjust brightness/text size |
+| Enter/Space | Focus the selected display, choose an option, or activate Keep/Revert |
+| `m` / `r` / `s` | Open resolution / refresh / scale for the selected display |
+| `p` | Toggle the selected display |
+| `a` | Open/close Arrange |
+| `?` | Expand/collapse More shortcuts |
+| Escape | Close the picker, return from Arrange, then close the panel |
 | Tab/Shift+Tab | Move between shell panels |
+
+In Arrange, arrows place the selected display relative to the reference display;
+`n` selects the next display and Enter applies the preview. All monitor numbers
+match config order, regardless of their current physical position.
 
 To toggle displays without opening the panel, add bindings to
 `~/.config/hypr/bindings.lua`. Numbers follow **config order**, not connector names:
@@ -140,6 +129,9 @@ monitor-switcher toggle 1
 monitor-switcher enable MSI
 monitor-switcher disable DP-2
 monitor-switcher scale MSI 1.875          # round to a Hyprland-compatible scale
+monitor-switcher scale-trial MSI 1.875    # same setting with Keep/Revert
+monitor-switcher focus LG                # focus without changing monitor power
+monitor-switcher mode MSI 2560x1440@239.85 # try an exact advertised mode
 monitor-switcher refresh MSI 240         # begin trial; prints confirmation token
 monitor-switcher confirm <token>         # keep the trial mode
 monitor-switcher revert <token>          # restore previous settings
@@ -152,12 +144,22 @@ a refresh trial.
 
 ### Arrange Displays
 
+Click **Arrange…**, turn on at least two displays, and drag their rectangles to
+match your desk. Edges snap together. Alternatively select a display, choose a
+reference, and use Left/Right/Above/Below. **Align in a row** previews the saved
+config order. **Apply arrangement** starts a verified 20-second trial.
+
+The map shows **logical desktop space** (resolution divided by scaling), so its
+proportions can differ from the physical-size illustrations in the overview.
+Overlaps and disconnected islands are rejected to keep pointer travel usable.
+
 ```bash
 monitor-switcher plan                    # compute layout without applying it
 monitor-switcher move LG 2048x0          # pin an origin in logical pixels
 monitor-switcher move LG above MSI       # left-of, right-of, above or below
 monitor-switcher swap MSI LG             # swap pack-order entries; clear their pins
 monitor-switcher pack                    # clear all pins; pack left-to-right
+monitor-switcher arrange '[{"output":"DP-3","x":0,"y":0},{"output":"DP-2","x":2048,"y":0}]'
 ```
 
 Geometry comes from configured resolution, scale and rotation, not a temporary
@@ -187,6 +189,12 @@ Array order determines packing and shortcut numbers:
 | `transform` | `0` | Rotation/reflection; `1` is 90 degrees, `3` is 270 degrees |
 | `position` | Automatic packing | Optional pinned origin, such as `2048x0` |
 | `mode_w`, `mode_h` | Managed | Geometry snapshots for preferred mode; do not edit manually |
+| `identity` | Managed | EDID make/model/serial used for unambiguous connector changes |
+
+Each connector must appear only once. The backend reports duplicate entries
+instead of generating competing rules. Temporary FALLBACK outputs are not
+adopted. A modeless output remains visible with a recovery status; it does not
+hide the other monitors.
 
 Keep a wildcard fallback in `~/.config/hypr/monitors.lua` for unmanaged outputs,
 rather than competing explicit rules:
@@ -243,12 +251,17 @@ Never modify packaged Omarchy files.
 ```bash
 node --test tests/*.test.js
 bash -n bin/monitor-switcher
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+  /usr/lib/qt6/bin/qmltestrunner -input tests/ui -import tests/ui/imports
 ```
 
 Backend tests use temporary HOME directories and a fail-closed compositor stub,
 not live displays. They cover mode selection, fractional rates, pending trials,
 watchdog recovery, rollback, concurrency, unsafe paths and layout guards. Model
-tests cover refresh matching, gallery proportions and exact scale stops.
+tests cover refresh matching, gallery proportions, exact scale stops and
+arrangement snapping/connectivity. Offscreen QML tests exercise the actual
+interactive components with isolated theme tokens: dragging, per-card targeting,
+wheel behavior and pending power switches. They never call a live monitor backend.
 
 Before shipping, inspect the live gallery and keyboard navigation, confirm that
 scrolling cannot edit values, and check that toggles survive a reload. IPC state:

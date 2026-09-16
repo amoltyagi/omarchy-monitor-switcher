@@ -142,6 +142,166 @@ function displayAspectRatio(display) {
   return Number(display.transform || 0) % 2 === 1 ? h / w : w / h
 }
 
+function displayDimensions(display) {
+  var d = display || {}
+  var live = Number(d.width) > 0 && Number(d.height) > 0 && d.enabled !== false
+  return { width: Number(live ? d.width : d.configuredWidth) || 0,
+    height: Number(live ? d.height : d.configuredHeight) || 0, live: live }
+}
+
+function physicalSize(display) {
+  var w = Number(display.physicalWidth), h = Number(display.physicalHeight)
+  if (!(w > 0 && h > 0 && isFinite(w) && isFinite(h))) {
+    // Unknown EDID: a nominal illustration, never an invented size label.
+    var aspect = displayAspectRatio(display)
+    return { width: 600, height: 600 / aspect }
+  }
+  return Number(display.transform || 0) % 2 ? { width: h, height: w } : { width: w, height: h }
+}
+
+// One shared physical-to-UI factor per gallery. Reduce columns rather than
+// shrinking embedded controls into unreadable labels on narrow panels.
+function galleryLayout(monitors, width, gap, minimumWidth, maximumHeight, footerHeight) {
+  if (!monitors.length || width <= 0) return { boxes: [], height: 0 }
+  var sizes = monitors.map(physicalSize)
+  var columns = Math.min(3, monitors.length), factor = 1
+  while (columns >= 1) {
+    factor = Infinity
+    for (var start = 0; start < sizes.length; start += columns) {
+      var group = sizes.slice(start, start + columns)
+      var total = group.reduce(function(n, s) { return n + s.width }, 0)
+      factor = Math.min(factor, (width - gap * (group.length - 1)) / total)
+    }
+    factor = Math.min(factor, maximumHeight / Math.max.apply(null, sizes.map(function(s) { return s.height })))
+    if (columns === 1 || sizes.every(function(s) { return s.width * factor >= minimumWidth })) break
+    columns--
+  }
+  var footer = footerHeight === undefined ? gap * 2 : footerHeight
+  var rowHeight = Math.max.apply(null, sizes.map(function(s) { return s.height * factor })) + footer
+  var boxes = []
+  for (var row = 0; row * columns < sizes.length; row++) {
+    var first = row * columns, count = Math.min(columns, sizes.length - first)
+    var rowWidth = sizes.slice(first, first + count).reduce(function(n, s) { return n + s.width * factor }, 0) + gap * (count - 1)
+    var x = (width - rowWidth) / 2
+    for (var i = first; i < first + count; i++) {
+      var w = sizes[i].width * factor, h = sizes[i].height * factor
+      boxes.push({ x: x, y: row * rowHeight + rowHeight - footer - h, width: w, height: h })
+      x += w + gap
+    }
+  }
+  return { boxes: boxes, height: Math.ceil(sizes.length / columns) * rowHeight }
+}
+
+function resolutionChoices(display) {
+  var groups = {}, currentRate = Number(display.refreshRate) || Number(String(display.mode || '').split('@')[1]) || 60
+  ;(display.availableModes || []).forEach(function(m) {
+    var key = m.width + 'x' + m.height
+    if (!groups[key] || Math.abs(m.rate - currentRate) < Math.abs(groups[key].rate - currentRate)) groups[key] = m
+  })
+  return Object.keys(groups).map(function(key) { return groups[key] })
+    .sort(function(a, b) { return b.width * b.height - a.width * a.height || b.width - a.width })
+    .map(function(m) { return { label: m.width + ' × ' + m.height, value: m.mode } })
+}
+
+function cardChoices(display, field) {
+  var size = displayDimensions(display)
+  if (field === 'mode') return resolutionChoices(display)
+  if (field === 'refresh') return (display.availableModes || [])
+    .filter(function(m) { return m.width === size.width && m.height === size.height })
+    .sort(function(a, b) { return a.rate - b.rate })
+    .map(function(m) { return { label: formatRefreshRate(m.rate) + ' Hz', value: m.mode } })
+  if (field === 'scale') return scaleStops(['1', '1.25', '1.5', '1.6', '2', '3', '4'],
+    display.scale || display.configuredScale, size.width, size.height)
+    .map(function(s) {
+      var clean = cleanScale(s, size.width, size.height)
+      return { label: Math.round(Number(clean) * 1000) / 10 + '%', value: clean }
+    })
+  return []
+}
+
+function arrangementBoxes(monitors) {
+  return monitors.filter(function(m) { return m.usable }).map(function(m) {
+    var rotated = Number(m.liveTransform || 0) % 2
+    return { output: m.output, name: m.alias || m.output, num: m.num,
+      x: Number(m.x) || 0, y: Number(m.y) || 0,
+      w: Math.round(Number(rotated ? m.height : m.width) / Number(m.scale || 1)),
+      h: Math.round(Number(rotated ? m.width : m.height) / Number(m.scale || 1)) }
+  })
+}
+
+function arrangementView(boxes, width, height, padding) {
+  if (!boxes.length) return { scale: 1, x: width / 2, y: height / 2 }
+  var left = Math.min.apply(null, boxes.map(function(b) { return b.x }))
+  var top = Math.min.apply(null, boxes.map(function(b) { return b.y }))
+  var right = Math.max.apply(null, boxes.map(function(b) { return b.x + b.w }))
+  var bottom = Math.max.apply(null, boxes.map(function(b) { return b.y + b.h }))
+  var scale = Math.max(0.001, Math.min((width - padding * 2) / (right - left), (height - padding * 2) / (bottom - top)))
+  return { scale: scale, x: (width - (right - left) * scale) / 2 - left * scale,
+    y: (height - (bottom - top) * scale) / 2 - top * scale }
+}
+
+function boxesTouch(a, b) {
+  return ((a.x + a.w === b.x || b.x + b.w === a.x) && Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y))
+    || ((a.y + a.h === b.y || b.y + b.h === a.y) && Math.min(a.x + a.w, b.x + b.w) > Math.max(a.x, b.x))
+}
+
+function arrangementError(boxes) {
+  if (boxes.length < 2) return 'Turn on another display to arrange your desktop.'
+  for (var i = 0; i < boxes.length; i++) for (var j = i + 1; j < boxes.length; j++) {
+    var a = boxes[i], b = boxes[j]
+    if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h)
+      return 'Move the displays apart; their screens overlap.'
+  }
+  var seen = [0]
+  for (var round = 0; round < boxes.length; round++) {
+    boxes.forEach(function(box, index) {
+      if (seen.indexOf(index) < 0 && seen.some(function(s) { return boxesTouch(box, boxes[s]) })) seen.push(index)
+    })
+  }
+  return seen.length === boxes.length ? '' : 'Bring the edges together so your pointer can cross between displays.'
+}
+
+function placeDisplay(boxes, index, reference, direction) {
+  var result = boxes.map(function(b) { return Object.assign({}, b) })
+  var a = result[index], b = result[reference]
+  if (!a || !b || index === reference) return result
+  a.x = direction === 'left' ? b.x - a.w : direction === 'right' ? b.x + b.w : b.x
+  a.y = direction === 'above' ? b.y - a.h : direction === 'below' ? b.y + b.h : b.y
+  return result
+}
+
+function snapDisplay(boxes, index, x, y, threshold) {
+  var result = boxes.map(function(b) { return Object.assign({}, b) })
+  var a = result[index]
+  if (!a) return result
+  a.x = Math.round(x); a.y = Math.round(y)
+  var best = null, distance = threshold * threshold
+  function candidate(cx, cy) {
+    var d = Math.pow(cx - a.x, 2) + Math.pow(cy - a.y, 2)
+    if (d <= distance) { distance = d; best = { x: Math.round(cx), y: Math.round(cy) } }
+  }
+  result.forEach(function(b, i) {
+    if (i === index) return
+    var ys = [b.y, b.y + b.h - a.h, Math.round(b.y + (b.h - a.h) / 2)]
+    var xs = [b.x, b.x + b.w - a.w, Math.round(b.x + (b.w - a.w) / 2)]
+    if (a.y < b.y + b.h && a.y + a.h > b.y) ys.push(a.y)
+    if (a.x < b.x + b.w && a.x + a.w > b.x) xs.push(a.x)
+    ys.forEach(function(cy) { candidate(b.x - a.w, cy); candidate(b.x + b.w, cy) })
+    xs.forEach(function(cx) { candidate(cx, b.y - a.h); candidate(cx, b.y + b.h) })
+  })
+  if (best) { a.x = best.x; a.y = best.y }
+  return result
+}
+
+function packDisplays(boxes) {
+  var x = 0
+  return boxes.map(function(b) {
+    var next = Object.assign({}, b, { x: x, y: 0 })
+    x += b.w
+    return next
+  })
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     clampBrightness: clampBrightness,
@@ -154,6 +314,18 @@ if (typeof module !== "undefined") {
     parseDisplays: parseDisplays,
     formatRefreshRate: formatRefreshRate,
     matchingRefreshIndex: matchingRefreshIndex,
-    displayAspectRatio: displayAspectRatio
+    displayAspectRatio: displayAspectRatio,
+    displayDimensions: displayDimensions,
+    physicalSize: physicalSize,
+    galleryLayout: galleryLayout,
+    resolutionChoices: resolutionChoices,
+    cardChoices: cardChoices,
+    arrangementBoxes: arrangementBoxes,
+    arrangementView: arrangementView,
+    boxesTouch: boxesTouch,
+    arrangementError: arrangementError,
+    placeDisplay: placeDisplay,
+    snapDisplay: snapDisplay,
+    packDisplays: packDisplays
   }
 }
