@@ -72,18 +72,27 @@ test('removing the action-owning monitor transfers IPC and reconciles on a survi
   assert.equal(r.activePanel('LG'), lg)
 })
 
-test('read failures release reconciliation but remain visible until a fresh successful read', () => {
+test('read failures release reconciliation and never discard a concurrent in-flight success', () => {
   const { registry: r, panel } = fixture()
   const lg = panel('LG'), msi = panel('MSI')
   r.beginAction(lg)
   r.actionFinished(lg)
-  const stale = r.startRead(), failed = r.startRead()
+  const inflight = r.startRead(), failed = r.startRead()
   r.readFailed('Compositor unavailable', failed)
   assert.equal(lg.sharedActionRunning, false)
   assert.equal(msi.stateError, 'Compositor unavailable')
-  r.publishSnapshot({ monitors: [] }, stale)
-  assert.equal(msi.stateError, 'Compositor unavailable')
+  // The success started before the failure but carries valid data: it publishes.
+  const good = { monitors: [{ output: 'DP-1' }] }
+  assert.equal(r.publishSnapshot(good, inflight), true)
+  assert.equal(msi.state, good)
+  assert.equal(msi.stateError, '')
+  // A failure newer than the last published success still surfaces.
+  r.readFailed('Compositor unavailable again', r.startRead())
+  assert.equal(msi.stateError, 'Compositor unavailable again')
+  // A failure older than the last published success is ignored.
+  const oldFail = r.startRead()
   r.publishSnapshot({ monitors: [] }, r.startRead())
+  r.readFailed('stale failure', oldFail)
   assert.equal(msi.stateError, '')
 })
 

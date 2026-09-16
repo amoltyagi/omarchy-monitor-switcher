@@ -246,6 +246,7 @@ class NightLight:
         self.monitors = []
         self.last_message = ''
         self.error = ''
+        self.config_error = ''
 
     def load_monitors(self):
         value = read_json(self.config, [])
@@ -263,15 +264,24 @@ class NightLight:
         return key, self.preferences.get(key, {'enabled': False, 'temperature': 4000})
 
     def reconcile(self):
-        self.load_monitors()
+        # A corrupt or mid-write monitor config must not kill the service:
+        # report it and keep applying the last good monitor list.
+        try:
+            self.load_monitors()
+            self.config_error = ''
+        except (ValueError, OSError) as error:
+            self.config_error = 'Night Light: ' + str(error)[:300]
         for output, meta in list(self.wayland.outputs.items()):
             _, setting = self.preference(meta['name'])
             target = setting['temperature'] if setting['enabled'] else None
             if target != meta['temperature'] and not meta['error']:
                 try:
                     self.wayland.apply(output, target)
-                except (RuntimeError, ValueError) as error:
-                    meta['error'] = str(error)
+                # OSError covers socket.timeout from a stalled compositor; latch
+                # it per display (retried on the next user action or hotplug)
+                # instead of letting a transient stall kill the service.
+                except (RuntimeError, ValueError, OSError) as error:
+                    meta['error'] = str(error)[:300]
 
     def command(self, request):
         name, value = request.get('output'), request.get('value')
@@ -305,7 +315,7 @@ class NightLight:
             meta = live.get(name, {})
             states[name] = dict(setting, active=meta.get('temperature') is not None,
                                 available=bool(self.wayland.manager and name in live), error=meta.get('error', ''))
-        message = json.dumps({'ready': True, 'monitors': states, 'error': self.error}, separators=(',', ':'))
+        message = json.dumps({'ready': True, 'monitors': states, 'error': self.error or self.config_error}, separators=(',', ':'))
         if force or message != self.last_message:
             print(message, flush=True)
             self.last_message = message

@@ -115,7 +115,8 @@ Panel {
 
   function writeNightLight(output, value) {
     if (!nightLightProc.running || !nightLightReady) {
-      PanelRegistry.publishNightLight({ready: false, monitors: nightLightStates, error: "Night Light is unavailable. Reopen the panel to retry."})
+      // Preserve a healthy shared snapshot's ready flag; only report the error.
+      PanelRegistry.publishNightLight({ready: nightLightReady, monitors: nightLightStates, error: "Night Light is unavailable. Reopen the panel to retry."})
       return
     }
     nightLightProc.write(JSON.stringify({output: output, value: value}) + "\n")
@@ -141,8 +142,9 @@ Panel {
     actionTarget = output
     reopenAfterAction = opened && verb !== "focus"
     // argv carries all user/output values; none are interpolated into shell code.
-    actionProc.command = ["bash", Qt.resolvedUrl("bin/monitor-action").toString().replace(/^file:\/\//, ""),
-      verb, output, value || ""]
+    // Bounded so onExited (and with it PanelRegistry.actionFinished) always runs.
+    actionProc.command = ["timeout", "-k", "1", "45", "bash",
+      Qt.resolvedUrl("bin/monitor-action").toString().replace(/^file:\/\//, ""), verb, output, value || ""]
     // Keep optional arguments absent, rather than forwarding an empty fourth argument.
     if (!value) actionProc.command = actionProc.command.slice(0, -1)
     if (verb === "focus") close()
@@ -306,6 +308,7 @@ Panel {
   onOpenedChanged: {
     if (opened) {
       if (root.ipcOwner && !nightLightProc.running) nightLightProc.running = true
+      nightLightStartWatch.restart()
       PanelRegistry.synchronize()
       focusSection = refreshPending ? "confirmation" : arranging ? "arrangement" : galleryMonitors.length ? "monitors" : "textsize"
       selectedIndex = refreshPending ? 0 : Math.max(0, galleryMonitors.findIndex(function(m) { return m.output === root.focusedMonitor }))
@@ -326,10 +329,19 @@ Panel {
     }
     onExited: if (root.ipcOwner) PanelRegistry.publishNightLight({ready: false, monitors: {}, error: "Night Light stopped. Reopen the panel to retry."})
   }
+  // Quickshell does not emit exited on FailedToStart (e.g. missing python3):
+  // detect a service that never came up instead of leaving chips silently dead.
+  Timer {
+    id: nightLightStartWatch
+    interval: 4000
+    onTriggered: if (root.ipcOwner && !nightLightReady)
+      PanelRegistry.publishNightLight({ready: false, monitors: {}, error: "Night Light could not start (is python3 available?)"})
+  }
 
   Process {
     id: switcherProc
-    command: ["bash", "-o", "pipefail", "-c", "\"$1\" state --json 2> >(head -c 65536 >&2) | head -c 262144", "monitor-switcher", root.scriptPath]
+    // Bounded: a wedged backend lock must surface as an error, not stall the panel.
+    command: ["bash", "-o", "pipefail", "-c", "timeout -k 1 35 \"$1\" state --json 2> >(head -c 65536 >&2) | head -c 262144", "monitor-switcher", root.scriptPath]
     stdout: StdioCollector { id: stateOutput; waitForEnd: true }
     stderr: StdioCollector { id: stateErrors; waitForEnd: true }
     onExited: function(exitCode) {
@@ -472,6 +484,14 @@ Panel {
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: panelColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
         Binding { target: scrollArea.contentItem; property: "interactive"; value: panelColumn.implicitHeight > scrollArea.height }
+        // Scrolling moves the chip beneath its open Night Light popup, whose
+        // above/below placement cannot track that: close the editor instead.
+        Connections {
+          target: scrollArea.contentItem
+          function onContentYChanged() {
+            if (gallery.editorField === "nightlight") gallery.closeEditor()
+          }
+        }
 
         Column {
           id: panelColumn

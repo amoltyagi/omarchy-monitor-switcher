@@ -1015,3 +1015,88 @@ test('returning monitor in a mixed-scale vertical layout uses a free touching ed
   const m = actual[1], a = actual[2];
   assert.ok(m.x + 1920 === a.x || a.x + 1920 === m.x || m.y + 1080 === a.y || a.y + 1080 === m.y);
 });
+
+test('state polls never rewrite unchanged config or state files', async t => {
+  // Regression: [[ a != $b ]] treats the RHS as a glob pattern, so JSON with
+  // brackets always "differed" and every poll rewrote both files.
+  const f = await fixture(t);
+  const stateBefore = await readFile(path.join(f.stateDir, 'state.json'), 'utf8');
+  await f.ok('state', '--json');
+  await f.ok('state', '--json');
+  await f.unchanged();
+  assert.equal(await readFile(path.join(f.stateDir, 'state.json'), 'utf8'), stateBefore);
+});
+
+test('move pins an explicit position and verifies the applied layout', async t => {
+  const f = await fixture(t);
+  const result = await f.ok('move', 'DP-2', '1920x0');
+  assert.match(result.stdout, /Side \(DP-2\) at 1920x0/);
+  const cfg = await f.json(f.config);
+  assert.equal(cfg.find(m => m.output === 'DP-2').position, '1920x0');
+  const lua = await readFile(f.generated, 'utf8');
+  assert.match(lua, /output = "DP-2", mode = "1920x1080@60", position = "1920x0"/);
+  const liveNow = await f.json(path.join(f.home, 'live.json'));
+  assert.deepEqual([liveNow[1].x, liveNow[1].y], [1920, 0]);
+});
+
+test('relative move places a monitor against its reference edge', async t => {
+  const f = await fixture(t);
+  // DP-1 sits at -1440x100 (1440x2560 logical, rotated); DP-2 is 1920x1080.
+  const result = await f.ok('move', 'DP-2', 'above', 'DP-1');
+  assert.match(result.stdout, /Side \(DP-2\) at -1440x-980/);
+  const cfg = await f.json(f.config);
+  assert.equal(cfg.find(m => m.output === 'DP-2').position, '-1440x-980');
+  const liveNow = await f.json(path.join(f.home, 'live.json'));
+  assert.deepEqual([liveNow[1].x, liveNow[1].y], [-1440, -980]);
+});
+
+test('layout verbs refuse bad targets and leave config and layout untouched', async t => {
+  const f = await fixture(t);
+  const cases = [
+    [['move', 'DP-1', 'above', 'DP-1'], /relative to itself/],
+    [['move', 'DP-1', 'above', 'DP-9'], /unknown monitor: DP-9/],
+    [['move', 'DP-1', 'next-to', 'DP-2'], /unknown direction: next-to/],
+    [['swap', 'DP-1', 'DP-1'], /cannot swap DP-1 with itself/],
+  ];
+  for (const [args, pattern] of cases) {
+    const result = await f.run(...args);
+    assert.equal(result.code, 1, args.join(' '));
+    assert.match(result.stderr, pattern, args.join(' '));
+  }
+  await f.unchanged();
+});
+
+test('relative move requires both monitors connected and enabled', async t => {
+  const f = await fixture(t, { disabled: ['DP-2'] });
+  const result = await f.run('move', 'DP-1', 'below', 'DP-2');
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /connected and enabled/);
+  await f.unchanged();
+});
+
+test('swap exchanges pack order and clears pins on both monitors', async t => {
+  const f = await fixture(t);
+  const result = await f.ok('swap', 'DP-1', 'DP-2');
+  assert.match(result.stdout, /swapped DP-1 and DP-2 in the packing order/);
+  const cfg = await f.json(f.config);
+  assert.deepEqual(cfg.map(m => m.output), ['DP-2', 'DP-1']);
+  assert.ok(cfg.every(m => !('position' in m)), 'pins cleared');
+  const lua = await readFile(f.generated, 'utf8');
+  assert.match(lua, /output = "DP-2", mode = "1920x1080@60", position = "0x0"/);
+  assert.match(lua, /output = "DP-1", mode = "3840x2160@60\.00", position = "1920x0"/);
+  const liveNow = await f.json(path.join(f.home, 'live.json'));
+  assert.deepEqual([liveNow[1].x, liveNow[0].x], [0, 1920]);
+});
+
+test('pack clears all pins and packs left-to-right in config order', async t => {
+  const f = await fixture(t);
+  const result = await f.ok('pack');
+  assert.match(result.stdout, /positions cleared; monitors pack left-to-right in config order/);
+  const cfg = await f.json(f.config);
+  assert.ok(cfg.every(m => !('position' in m)), 'pins cleared');
+  const lua = await readFile(f.generated, 'utf8');
+  assert.match(lua, /output = "DP-1", mode = "3840x2160@60\.00", position = "0x0"/);
+  assert.match(lua, /output = "DP-2", mode = "1920x1080@60", position = "1440x0"/);
+  const liveNow = await f.json(path.join(f.home, 'live.json'));
+  assert.deepEqual([liveNow[0].x, liveNow[1].x], [0, 1440]);
+});

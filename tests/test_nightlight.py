@@ -95,6 +95,35 @@ class NightLightTests(unittest.TestCase):
                 self.service.command(request)
         self.assertEqual(self.display.calls, [])
 
+    def test_transient_compositor_stall_latches_error_without_killing_reconcile(self):
+        # socket.timeout is an OSError: a stalled compositor reply must latch a
+        # per-display error, not propagate out of reconcile and kill the service.
+        import io, contextlib
+        self.service.command({'output': 'DP-1', 'value': '4000'})
+        def stall(output, temperature):
+            raise TimeoutError('timed out')
+        self.display.apply = stall
+        self.display.outputs[4]['temperature'] = None  # force a re-apply attempt
+        self.service.reconcile()  # must not raise
+        self.assertIn('timed out', self.display.outputs[4]['error'])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.service.publish(force=True)
+        self.assertIn('timed out', out.getvalue())
+
+    def test_corrupt_monitor_config_is_reported_without_killing_the_service(self):
+        self.service.command({'output': 'DP-1', 'value': '4000'})
+        calls = list(self.display.calls)
+        self.config.write_text('{ not json')
+        self.service.reconcile()  # must not raise
+        self.assertIn('Night Light:', self.service.config_error)
+        # The last-good monitor list keeps existing gamma targets untouched.
+        self.assertEqual(self.display.calls, calls)
+        self.assertEqual(self.display.outputs[4]['temperature'], 4000)
+        self.config.write_text(json.dumps(self.monitors))
+        self.service.reconcile()
+        self.assertEqual(self.service.config_error, '')
+
     def test_gamma_ramps_are_monotonic_and_warmer_reduces_blue(self):
         warm = array.array('H'); warm.frombytes(nl.gamma_ramps(1024, 2500))
         mild = array.array('H'); mild.frombytes(nl.gamma_ramps(1024, 5000))

@@ -89,7 +89,8 @@ function publishSnapshot(state, ticket) {
 
 function readFailed(message, ticket) {
   if (outdated(ticket) || actionOwner !== null || ticket.serial < publishedSerial) return
-  publishedSerial = ticket.serial
+  // Do NOT advance publishedSerial here: a failed read must not discard a
+  // concurrent in-flight successful read that carries valid data.
   snapshotError = message
   panels.forEach(function(p) { p.stateError = message })
   reconciling = false

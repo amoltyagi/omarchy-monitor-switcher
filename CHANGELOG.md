@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.1.1 — Stability fixes — 2026-09-17
+
+- Keep an interrupted arrangement drag (focus loss, lock screen) instead of
+  discarding the draft.
+- Bound every backend lock wait and panel process: a stuck compositor call now
+  surfaces an error instead of leaving all panels disabled.
+- Night Light survives transient compositor stalls and a mid-session broken
+  monitor configuration, and reports when it cannot start at all.
+- A failed background state read no longer hides a concurrent successful one
+  across panels; the Night Light menu closes when the panel scrolls.
+- Unchanged config and state files are no longer rewritten on every poll: the
+  unchanged-check compared against a glob pattern, so JSON always "differed".
+- Tests: green-path move/swap/pack coverage, poll byte-stability, Night Light
+  fault recovery, and a lint gate compiling every shipped QML file.
+
 ## 3.1.0 — Monitor management and independent Night Light — 2026-09-16
 
 - Set and save Night Light independently for each monitor; open its temperature

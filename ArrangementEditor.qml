@@ -152,7 +152,8 @@ Column {
             editor.draft = Model.snapDisplay(editor.draft, display.index, x, y, Style.space(20) / editor.view.scale)
           }
           onReleased: { editor.dragging = false; editor.viewBoxes = editor.draft; editor.notice = "" }
-          onCanceled: { editor.dragging = false; editor.reset() }
+          // A stolen grab (focus loss, lock screen) ends the drag; keep the draft.
+          onCanceled: { editor.dragging = false; editor.viewBoxes = editor.draft; editor.notice = "" }
         }
       }
     }

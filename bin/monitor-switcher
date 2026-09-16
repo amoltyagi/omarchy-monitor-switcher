@@ -163,13 +163,18 @@ remove_file() {
   rm -f -- "$1"
 }
 
-lock_backend() {
+lock_backend() { # [wait-seconds] — a bounded wait: a wedged lock holder (hung
+  # hyprctl, a killed process) must surface as an error, never silently freeze
+  # every caller; the UI has no other way to time out.
   guard_path "$LOCK_FILE" || die "refusing unsafe lock path: $LOCK_FILE"
   mkdir -p -- "$STATE_DIR"
   # O_RDWR does not block if a FIFO is swapped in; the descriptor check rejects it.
   exec {LOCK_FD}<>"$LOCK_FILE"
   [[ -f /proc/$$/fd/$LOCK_FD ]] || die "unsafe lock file"
-  flock -x "$LOCK_FD"
+  if ! flock -w "${1:-25}" -x "$LOCK_FD"; then
+    echo "monitor-switcher: another monitor-switcher operation is still running; retry in a moment" >&2
+    return 1
+  fi
   guard_path "$LOCK_FILE" && [[ $LOCK_FILE -ef /proc/$$/fd/$LOCK_FD ]] || die "lock path changed while waiting"
 }
 
@@ -262,7 +267,8 @@ refresh_watchdog() {
   jq -n --arg token "$token" --argjson pid "$$" '{token: $token, pid: $pid}' | write_file "$READY_FILE"
   while :; do
     sleep 1
-    lock_backend
+    # A busy lock must not kill the watchdog: it is the rollback safety net.
+    lock_backend 5 || continue
     read_pending
     [[ $PENDING != null && $(jq -r .token <<<"$PENDING") == "$token" ]] || return 0
     if rollback_required && restore_refresh "$token"; then return 0; fi
@@ -440,10 +446,12 @@ persist_config() { # Rebind saved off-state when hardware moves to a new connect
     st=$(jq --argjson cfg "$cfg" '
       .disabled |= (map(. as $old | ([$cfg[] | select(.previousOutput == $old)][0].output // $old)) | unique)' <<<"$st")
   fi
-  if [[ $(jq -c . <<<"$st") != $(read_state | jq -c .) ]]; then printf '%s\n' "$st" | write_file "$STATE_FILE"; fi
+  # Quote the right-hand side: in [[ =/!= ]] the RHS is a glob PATTERN, and JSON
+  # brackets would be parsed as character classes — silently always "differing".
+  if [[ $(jq -c . <<<"$st") != "$(read_state | jq -c .)" ]]; then printf '%s\n' "$st" | write_file "$STATE_FILE"; fi
   cfg=$(jq 'map(del(.previousOutput))' <<<"$cfg")
   # Polling should not rewrite unchanged files (nor trigger file watchers).
-  if [[ ! -f $CONFIG_FILE ]] || [[ $(jq -c . <<<"$cfg") != $(read_config | jq -c .) ]]; then
+  if [[ ! -f $CONFIG_FILE ]] || [[ $(jq -c . <<<"$cfg") != "$(read_config | jq -c .)" ]]; then
     printf '%s\n' "$cfg" | write_file "$CONFIG_FILE"
   fi
 }
