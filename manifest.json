@@ -5,7 +5,7 @@
   "version": "3.1.0",
   "author": "amoltyagi",
   "license": "MIT",
-  "description": "Independent Night Light for every monitor, click-to-edit display settings, power switches, drag-to-arrange and verified Keep/Revert.",
+  "description": "Manage resolution, refresh rate, scale, power and desktop layout, with independent Night Light and verified Keep/Revert.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Monitor Switcher",
-    "description": "Per-monitor warmth, adaptive display controls, persistent layouts and verified recovery",
+    "description": "Adaptive monitor controls, persistent layouts, independent Night Light and verified recovery",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"

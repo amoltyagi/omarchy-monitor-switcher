@@ -1,16 +1,14 @@
-<img src="logo.svg" alt="Monitor Switcher logo" width="88" height="88">
-
 # Monitor Switcher
 
-## Night Light. Each display.
+## Your displays. One place.
 
-Your displays in one panel for [Omarchy](https://omarchy.org). Set a different
-Night Light temperature on each monitor, or leave individual screens in daylight.
+Manage resolution, refresh rate, scale, power and desktop layout in one panel
+for [Omarchy](https://omarchy.org).
 
-<img src="preview.png" alt="Monitor Switcher: MSI at 4000 K, LG at 5000 K, and Acer with Night Light off. The temperature menu opens from its own toggle." width="1000">
+<img src="preview.png" alt="Monitor Switcher management panel with three displays, editable resolution, refresh rate and scale, per-monitor power toggles, brightness and Arrange." width="1000">
 
 - **Click to edit.** Resolution, refresh and scale sit right on each display.
-- **Independent warmth.** MSI at 4000 K, LG at 5000 K, Acer off — each monitor has its own saved Night Light setting.
+- **Independent Night Light.** Choose and save warmth separately for every monitor.
 - **Recover your desk.** Restore the last verified layout for the connected monitor combination.
 - **Switch it on.** A simple power toggle beneath every monitor.
 - **Drag to arrange.** Snap screens together to match your desk.
@@ -19,6 +17,14 @@ Night Light temperature on each monitor, or leave individual screens in daylight
 
 Settings persist across reloads and reboots. Colors follow your theme.
 [Release notes](RELEASE-NOTES.md) · [Changelog](CHANGELOG.md)
+
+## Night Light for each monitor.
+
+Warm one screen and leave another in daylight. Each monitor keeps its own saved
+temperature; its menu opens directly from the toggle. Here MSI is at 4000 K,
+LG at 5000 K, and Acer has Night Light off.
+
+<img src="preview-night-light.png" alt="Independent Night Light settings: MSI 4000 K, LG 5000 K and Acer off, with MSI's temperature menu open." width="1000">
 
 ## A place for every display.
 

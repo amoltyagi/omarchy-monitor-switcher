@@ -222,3 +222,32 @@ Final release checks: plugin manifest validation, Bash/Python syntax, whitespace
 The installed backend is identical to the earlier frozen 71/71 passing backend
 run. Artwork was rendered and visually inspected before committing. This
 publication record is a documentation follow-up; it does not change released code.
+
+## Artwork correction — management hero, three MSI captures
+
+The user clarified that monitor management is the main story and Night Light
+should be shown as one feature in a secondary image. All three screenshots were
+recaptured on MSI DP-3 at 3840×2160, 240 Hz, scale 1.875. Native panel captures
+are 1993 pixels wide. Reviewed artwork preserves their native resolution with
+small margins and one short caption. Order is:
+
+1. `preview.png`: main monitor management panel (settings, power, brightness,
+   Arrange), no open Night Light picker and all Night Light settings off.
+2. `preview-night-light.png`: independent Night Light at MSI 4000 K, LG 5000 K,
+   Acer Off, with MSI's toggle menu open.
+3. `preview-detail.png`: visual arrangement and Apply controls.
+
+The README and release body use exactly three screenshot images. The initial
+README logo image was removed so these are the complete image sequence.
+Raw captures replace the three existing files under `assets/screenshots/`.
+Editable SVG sources now include `assets/night-light.svg`. README/release copy,
+manifest descriptions and the screenshot provenance emphasize management first.
+The release title becomes “Monitor Switcher — Your displays. One place.”
+
+Acer was temporarily activated at its saved mode/scale for the examples, then
+returned to its original disabled state. Night Light preferences were backed up
+and restored. Neither the theme nor saved monitor configuration was changed.
+This is an artwork/documentation correction; version remains 3.1.0. Its tag
+still identifies the released implementation, while updated artwork is committed
+on main and referenced by immutable commit URLs in the edited release body.
+The GitHub release attachments are replaced by just the three reviewed previews.

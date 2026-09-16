@@ -1,19 +1,28 @@
 # Monitor Switcher
 
-Independent Night Light for every monitor.
+Your displays. One place.
 
-![Different Night Light settings on three monitors, with the temperature menu open](preview.png)
+Manage resolution, refresh rate, scale, power and desktop layout from one panel.
 
-- Choose warmth separately for each display: 2500–5000 K, or Off.
-- Open the temperature menu directly from its toggle. Other monitors keep their settings.
-- Enjoy a polished gallery that adapts to screen size and scale, with readable controls.
-- Bring the middle monitor back after joining the outer displays; the switcher makes room.
-- Restore a verified working layout and try display changes with 20-second Keep/Revert.
+![Monitor management panel with display settings, power controls and Arrange](preview.png)
 
-Preferences persist across reloads and reboots. Power changes continue even if
-the initiating screen turns off, and rollback verifies the restored layout.
+- Edit settings directly on each display and try changes with 20-second Keep/Revert.
+- Drag and snap desktops together; the switcher makes room when a middle monitor returns.
+- Restore the last verified working layout for your connected monitors.
+- Use a gallery that adapts to screen size and scale, with readable controls.
+
+Night Light is one of the panel's features: choose warmth separately for each
+monitor, or leave selected screens in daylight. Preferences persist across
+reloads and reboots.
+
+![MSI at 4000 K, LG at 5000 K and Acer off, with an independent temperature menu](preview-night-light.png)
+
+Preview your desktop arrangement before applying it.
 
 ![Drag-and-snap arrangement with the Apply action](preview-detail.png)
+
+Power changes continue if the initiating screen turns off, and rollback verifies
+the restored layout.
 
 Update with:
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.1.0 — Independent Night Light — 2026-09-16
+## 3.1.0 — Monitor management and independent Night Light — 2026-09-16
 
 - Set and save Night Light independently for each monitor; open its temperature
   menu from its own toggle without hiding the monitor specifications.
@@ -14,8 +14,8 @@
 - Finish power changes even when disabling their initiating monitor panel.
 - Verify rollback before discarding backups and preserve first-run positions.
 - Surface bounded brightness/text-size command failures.
-- Replace the old text-heavy artwork and earlier screenshots with fresh,
-  tightly cropped plugin captures showing different Night Light states.
+- Replace the old text-heavy artwork with three fresh high-DPI MSI captures:
+  monitor-management hero, independent Night Light feature and arrangement.
 - Keep the public name “Monitor Switcher”; versions belong in release metadata.
 - Add responsive QML and returning-display/rollback tests; see HANDOFF.md.
 
