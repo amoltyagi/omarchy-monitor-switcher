@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.1.2 — Driver wedge recovery — 2026-09-20
+
+- Recover from the NVIDIA/aquamarine "GPU wedge" without a reboot: when an
+  expected-enabled, physically connected monitor comes back modeless (0×0)
+  because the driver rejected every atomic modeset, the backend now bounces
+  the output through a disable → settle → enable cycle, releasing and
+  re-acquiring its CRTC. Works for any output, so any monitor combination is
+  covered. A recoverable wedge completes the change; an unrecoverable one
+  rolls back cleanly and names the driver as the cause.
+- Regression tests simulate both a recoverable and an unrecoverable wedge in
+  the fail-closed compositor fixture.
+
 ## 3.1.1 — Stability fixes — 2026-09-17
 
 - Keep an interrupted arrangement drag (focus loss, lock screen) instead of

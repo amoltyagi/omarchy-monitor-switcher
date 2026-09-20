@@ -60,7 +60,16 @@ if (args === 'monitors all -j') {
       if (!control.ignorePower) { monitor.disabled = true; monitor.width = monitor.height = 0; }
       continue;
     }
+    // Simulated driver wedge: an enabled monitor comes back modeless (0x0)
+    // after reload. A direct hyprctl disable/enable bounce is what recovers.
+    if (control.failure === 'wedge' && monitor.name === (control.wedgeTarget || 'DP-2') && !monitor.wedged) {
+      monitor.wedged = true;
+      monitor.baseWidth = monitor.width; monitor.baseHeight = monitor.height;
+      monitor.disabled = false; monitor.width = monitor.height = 0;
+      continue;
+    }
     const m = line.match(/mode = "([0-9]+)x([0-9]+)@([0-9.]+)"/);
+    if (monitor.wedged) continue;
     const p = line.match(/position = "(-?[0-9]+)x(-?[0-9]+)"/);
     const s = line.match(/scale = ([0-9.]+)/);
     const t = line.match(/transform = ([0-9]+)/);
@@ -86,6 +95,26 @@ if (args === 'monitors all -j') {
   const live = JSON.parse(fs.readFileSync(liveFile, 'utf8'));
   for (const m of live) m.focused = m.name === (args.includes('"DP-1"') ? 'DP-1' : 'DP-2');
   fs.writeFileSync(liveFile, JSON.stringify(live));
+  console.log('ok');
+} else if (args.startsWith('eval hl.monitor({ output = "') && args.includes('disabled = ')) {
+  // Simulated driver wedge: on reload the target comes back modeless; the
+  // disable → settle → enable bounce releases and re-acquires the CRTC.
+  const live = JSON.parse(fs.readFileSync(liveFile, 'utf8'));
+  const name = args.match(/output = "([A-Za-z0-9_.-]+)"/)[1];
+  const monitor = live.find(m => m.name === name);
+  if (monitor) {
+    if (args.includes('disabled = true')) { monitor.disabled = true; monitor.width = monitor.height = 0; }
+    else if (control.wedgeForever && monitor.wedged) {
+      // The driver stays wedged: the enable does not restore a mode.
+      monitor.disabled = false; monitor.width = monitor.height = 0;
+    }
+    else {
+      monitor.disabled = false;
+      monitor.width = monitor.baseWidth || monitor.width || 1920;
+      monitor.height = monitor.baseHeight || monitor.height || 1080;
+    }
+    fs.writeFileSync(liveFile, JSON.stringify(live));
+  }
   console.log('ok');
 } else { console.error('FORBIDDEN hyprctl invocation: ' + args); process.exit(98); }
 `;
@@ -1014,6 +1043,29 @@ test('returning monitor in a mixed-scale vertical layout uses a free touching ed
   assert.deepEqual(state.overlaps, []);
   const m = actual[1], a = actual[2];
   assert.ok(m.x + 1920 === a.x || a.x + 1920 === m.x || m.y + 1080 === a.y || a.y + 1080 === m.y);
+});
+
+test('a wedged driver (enabled monitor stuck modeless) is bounced and recovered, not rolled back', async t => {
+  const f = await fixture(t, { disabled: ['DP-2'], control: { failure: 'wedge', wedgeTarget: 'DP-2' } });
+  const result = await f.ok('enable', 'DP-2');
+  assert.match(result.stderr, /GPU rejected the modeset for: DP-2/);
+  assert.match(result.stderr, /recovered the wedged display output without a reboot/);
+  const liveNow = await f.json(path.join(f.home, 'live.json'));
+  assert.equal(liveNow[1].disabled, false);
+  assert.equal(liveNow[1].width, 1920);
+  assert.deepEqual((await f.json(path.join(f.stateDir, 'state.json'))).disabled, []);
+});
+
+test('an unrecoverable wedge rolls back cleanly and names the driver as the cause', async t => {
+  // A wedge that never heals (persistent modeless state) must roll back.
+  const f = await fixture(t, { disabled: ['DP-2'], control: { failure: 'wedge', wedgeTarget: 'DP-2', wedgeForever: true } });
+  const result = await f.run('enable', 'DP-2');
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /driver rejected the layout \(GPU wedge\)/);
+  assert.match(result.stderr, /verification failed/);
+  // The toggle reverted to the exact pre-attempt state: DP-2 stays off.
+  assert.deepEqual((await f.json(f.config)).map(m => m.output), ['DP-1', 'DP-2']);
+  assert.deepEqual((await f.json(path.join(f.stateDir, 'state.json'))).disabled, ['DP-2']);
 });
 
 test('state polls never rewrite unchanged config or state files', async t => {

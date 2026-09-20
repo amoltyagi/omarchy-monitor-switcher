@@ -623,6 +623,45 @@ verify_layout() { # <expected-json>, bounded by the caller.
   done
 }
 
+# The NVIDIA + aquamarine driver wedge: an expected-enabled, physically
+# connected output comes back modeless (0x0) because the kernel rejects every
+# atomic modeset (EINVAL). Any monitor on any connector can be hit; the fix
+# below is hardware-agnostic — it works off the expected layout, not names.
+modeless_outputs() { # <expected-json> <live-json> — stdout: names, one per line
+  jq -r --argjson lv "$2" '
+    .[] | select(.disabled != true) | .output as $o
+    | ([$lv[] | select(.name == $o)][0] // null) as $m
+    | select($m != null and ($m.disabled != true)
+        and (($m.width // 0) <= 0 or ($m.height // 0) <= 0))
+    | $o' <<<"$1"
+}
+
+# Recovery for the wedge: bounce each modeless output through a disable →
+# settle → re-enable cycle so the compositor releases and re-acquires its CRTC,
+# then re-apply the intended layout. Uses only hyprctl and the generated rule
+# set, so it behaves identically for any monitor combination a user builds.
+unwedge_outputs() { # <expected-json> — returns 0 iff every modeless output recovered
+  local expected=$1 lv targets target recovered=1
+  lv=$(timeout -k 1 2 hyprctl monitors all -j 2>/dev/null | head -c 1048576) || return 1
+  targets=$(modeless_outputs "$expected" "$lv")
+  [[ -n $targets ]] || return 0
+  echo "monitor-switcher: GPU rejected the modeset for: $(paste -sd, <<<"$targets"); attempting driver-level recovery" >&2
+  while read -r target; do
+    [[ -n $target ]] || continue
+    # Release the wedged CRTC. bounded_hyprctl keeps this from hanging.
+    bounded_hyprctl eval "hl.monitor({ output = \"$target\", disabled = true })" > /dev/null 2>&1 || true
+  done <<<"$targets"
+  # Give the driver a beat to finish the teardown before re-acquiring.
+  sleep 1
+  while read -r target; do
+    [[ -n $target ]] || continue
+    bounded_hyprctl eval "hl.monitor({ output = \"$target\", disabled = false })" > /dev/null 2>&1 || true
+  done <<<"$targets"
+  sleep 1
+  lv=$(timeout -k 1 2 hyprctl monitors all -j 2>/dev/null | head -c 1048576) || return 1
+  [[ -z $(modeless_outputs "$expected" "$lv") ]]
+}
+
 # Recovery records are keyed by the connected hardware set, independent of
 # connector renumbering. Only successful application/confirmation creates one.
 working_key() {
@@ -760,6 +799,20 @@ apply() {
         (save_working "$expected") || echo "monitor-switcher: layout applied, but its recovery snapshot could not be saved" >&2
       fi
       return 0
+    fi
+    # Verification failed. If the signature is a wedged driver (an enabled,
+    # connected output stuck modeless), try a CRTC bounce once, then verify
+    # again before falling back to rollback.
+    if unwedge_outputs "$expected"; then
+      if timeout -k 1 6 bash -o pipefail -c "$(declare -f verify_layout); verify_layout \"\$@\"" _ "$expected"; then
+        echo "monitor-switcher: recovered the wedged display output without a reboot" >&2
+        if [[ ${1:-} != refresh ]]; then
+          (save_working "$expected") || echo "monitor-switcher: layout applied, but its recovery snapshot could not be saved" >&2
+        fi
+        return 0
+      fi
+    else
+      echo "monitor-switcher: the display driver rejected the layout (GPU wedge); recovery failed — a compositor restart or reboot is required" >&2
     fi
     echo "monitor-switcher: applied layout verification failed (mode, scale, position or power did not match)" >&2
   fi
