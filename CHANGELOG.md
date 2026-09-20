@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.1.3 — Apps re-layout after display changes — 2026-09-20
+
+- Windows on a monitor that was just enabled, re-scaled or repositioned now
+  re-render correctly instead of keeping a stale buffer scale or workspace
+  origin (which showed apps cut off at the screen edge while the compositor
+  reported correct coordinates). After a verified change, the affected
+  output is briefly bounced (disable → enable), making the compositor resend
+  geometry and fractional scale to every client — GTK, Qt and terminal apps
+  all re-adjust. Text-size changes made through the panel's scale controls
+  are covered by the same path. Monitors whose configuration did not change
+  are never bounced.
+
 ## 3.1.2 — Driver wedge recovery — 2026-09-20
 
 - Recover from the NVIDIA/aquamarine "GPU wedge" without a reboot: when an

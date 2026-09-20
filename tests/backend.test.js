@@ -99,9 +99,11 @@ if (args === 'monitors all -j') {
 } else if (args.startsWith('eval hl.monitor({ output = "') && args.includes('disabled = ')) {
   // Simulated driver wedge: on reload the target comes back modeless; the
   // disable → settle → enable bounce releases and re-acquires the CRTC.
+  // The same bounce is the re-layout trigger after scale/position changes.
   const live = JSON.parse(fs.readFileSync(liveFile, 'utf8'));
   const name = args.match(/output = "([A-Za-z0-9_.-]+)"/)[1];
   const monitor = live.find(m => m.name === name);
+  fs.appendFileSync(path.join(home, 'bounces'), name + ' ' + (args.includes('disabled = true') ? 'off' : 'on') + '\\n');
   if (monitor) {
     if (args.includes('disabled = true')) { monitor.disabled = true; monitor.width = monitor.height = 0; }
     else if (control.wedgeForever && monitor.wedged) {
@@ -1066,6 +1068,31 @@ test('an unrecoverable wedge rolls back cleanly and names the driver as the caus
   // The toggle reverted to the exact pre-attempt state: DP-2 stays off.
   assert.deepEqual((await f.json(f.config)).map(m => m.output), ['DP-1', 'DP-2']);
   assert.deepEqual((await f.json(path.join(f.stateDir, 'state.json'))).disabled, ['DP-2']);
+});
+
+test('enabling a monitor bounces it so clients re-layout with fresh scale/origin', async t => {
+  const f = await fixture(t, { disabled: ['DP-2'] });
+  f.live[1].disabled = true; f.live[1].width = f.live[1].height = 0;
+  await writeFile(path.join(f.home, 'live.json'), JSON.stringify(f.live));
+  await f.ok('enable', 'DP-2');
+  const bounces = (await readFile(path.join(f.home, 'bounces'), 'utf8')).trim().split('\n');
+  assert.deepEqual(bounces, ['DP-2 off', 'DP-2 on']);
+  const liveNow = await f.json(path.join(f.home, 'live.json'));
+  assert.equal(liveNow[1].disabled, false);
+  assert.deepEqual([liveNow[1].x, liveNow[1].y], [0, 0]);
+});
+
+test('a scale change bounces exactly the changed monitor, not the untouched one', async t => {
+  const f = await fixture(t);
+  await f.ok('scale', 'Main', '2');
+  const bounces = (await readFile(path.join(f.home, 'bounces'), 'utf8')).trim().split('\n');
+  assert.deepEqual(bounces, ['DP-1 off', 'DP-1 on']);
+});
+
+test('an unchanged apply performs no bounces', async t => {
+  const f = await fixture(t);
+  await f.ok('apply');
+  await assert.rejects(readFile(path.join(f.home, 'bounces')), { code: 'ENOENT' });
 });
 
 test('state polls never rewrite unchanged config or state files', async t => {

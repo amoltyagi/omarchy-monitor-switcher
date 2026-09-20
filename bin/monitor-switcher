@@ -662,6 +662,41 @@ unwedge_outputs() { # <expected-json> — returns 0 iff every modeless output re
   [[ -z $(modeless_outputs "$expected" "$lv") ]]
 }
 
+# After a verified apply, clients on a monitor whose scale or position just
+# changed — or which was just re-enabled — can keep a stale buffer scale or
+# workspace origin (observed live: windows render shifted off the physical
+# panel while hyprctl reports correct coordinates; GTK apps never re-negotiate
+# the fractional scale). Bouncing the output (disable → settle → re-enable)
+# forces the compositor to rebuild its render state for that output and
+# re-send geometry and scale to every client on it — verified to restore
+# correct rendering. A position nudge would work too, but in a packed layout
+# any 1px move transiently overlaps a neighbor and trips Hyprland's error
+# overlay; the bounce has no such side effect.
+relayout_changed() { # <live-before-json> <expected-json>
+  local before=$1 expected=$2 entry output live_before changed=()
+  while read -r entry; do
+    output=$(jq -r '.output' <<<"$entry")
+    live_before=$(jq -c --arg o "$output" '[.[] | select(.name == $o)][0] // empty' <<<"$before")
+    # Newly enabled (was disabled or modeless), or scale/position changed.
+    if [[ -z $live_before ]] || jq -en --argjson b "$live_before" --argjson e "$entry" '
+        ($b.disabled == true) or (($b.width // 0) <= 0) or (($b.height // 0) <= 0)
+        or ((($b.scale // 1) - $e.scale) | fabs) >= 0.0001
+        or ($b.x // 0) != $e.x or ($b.y // 0) != $e.y
+      ' > /dev/null 2>&1; then
+      changed+=("$output")
+    fi
+  done < <(jq -c '.[] | select(.disabled != true)' <<<"$expected")
+  ((${#changed[@]} > 0)) || return 0
+  local o
+  for o in "${changed[@]}"; do
+    bounded_hyprctl eval "hl.monitor({ output = \"$o\", disabled = true })" > /dev/null 2>&1 || continue
+  done
+  sleep 1
+  for o in "${changed[@]}"; do
+    bounded_hyprctl eval "hl.monitor({ output = \"$o\", disabled = false })" > /dev/null 2>&1 || true
+  done
+}
+
 # Recovery records are keyed by the connected hardware set, independent of
 # connector renumbering. Only successful application/confirmation creates one.
 working_key() {
@@ -798,6 +833,7 @@ apply() {
       if [[ ${1:-} != refresh ]]; then
         (save_working "$expected") || echo "monitor-switcher: layout applied, but its recovery snapshot could not be saved" >&2
       fi
+      relayout_changed "$lv" "$expected"
       return 0
     fi
     # Verification failed. If the signature is a wedged driver (an enabled,
@@ -809,6 +845,7 @@ apply() {
         if [[ ${1:-} != refresh ]]; then
           (save_working "$expected") || echo "monitor-switcher: layout applied, but its recovery snapshot could not be saved" >&2
         fi
+        relayout_changed "$lv" "$expected"
         return 0
       fi
     else
