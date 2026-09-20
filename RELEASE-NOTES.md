@@ -24,6 +24,11 @@ Preview your desktop arrangement before applying it.
 Power changes continue if the initiating screen turns off, and rollback verifies
 the restored layout.
 
+**3.1.2 + 3.1.3 — display reliability.** Recovers from the NVIDIA/aquamarine
+driver wedge (an enabled monitor stuck modeless at 0×0) without a reboot, and
+re-lays out clients after a monitor is enabled, re-scaled or moved, so apps no
+longer render cut off at the screen edge or keep a stale fractional scale.
+
 Update with:
 
 ```bash
