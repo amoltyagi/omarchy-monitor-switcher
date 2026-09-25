@@ -2,38 +2,48 @@
 
 ## Your displays. One place.
 
-Manage resolution, refresh rate, scale, power and desktop layout in one panel
-for [Omarchy](https://omarchy.org).
+Resolution, refresh rate, scale, **rotation**, power and layout for every
+monitor, in one panel for [Omarchy](https://omarchy.org). Every change is a
+verified before you keep it, and reverts by itself if you don't.
 
-<img src="preview.png" alt="Monitor Switcher management panel with three displays, editable resolution, refresh rate and scale, per-monitor power toggles, brightness and Arrange." width="1000">
+**[Install](#install)** · **[Rotate a display](#rotate-a-display)** · [Use the panel](#use-the-panel) · [Keyboard](#keyboard-controls) · [Command line](#command-line) · [What's new in 3.2](RELEASE-NOTES.md)
+
+<a href="preview.png"><img src="preview.png" alt="Monitor Switcher panel: MSI and LG in landscape, Acer in portrait, with resolution, refresh rate, scale, rotation, power and Night Light on every display." width="1000"></a>
 
 - **Click to edit.** Resolution, refresh and scale sit right on each display.
-- **Independent Night Light.** Choose and save warmth separately for every monitor.
-- **Recover your desk.** Restore the last verified layout for the connected monitor combination.
-- **Switch it on.** A simple power toggle beneath every monitor.
+- **Turn it portrait.** *New in 3.2:* rotate from the button on each monitor's chin.
 - **Drag to arrange.** Snap screens together to match your desk.
-- **Try it first.** Verified changes with 20-second Keep / Revert.
-- **Keep it simple.** The original shortcut stays. More shortcuts opens the rest.
+- **Try it first.** Display changes are verified and revert in 20 seconds unless you keep it.
+- **Night Light per monitor.** Warm one screen and leave another in daylight.
+- **Switch it on.** A power toggle under every monitor; the last one is protected.
+- **Recover your desk.** Restore the last verified layout for the monitors you have plugged in.
 
 Settings persist across reloads and reboots. Colors follow your theme.
-[Release notes](RELEASE-NOTES.md) · [Changelog](CHANGELOG.md)
 
-## Night Light for each monitor.
+## Portrait, in one click.
 
-Warm one screen and leave another in daylight. Each monitor keeps its own saved
-temperature; its menu opens directly from the toggle. Here MSI is at 4000 K,
-LG at 5000 K, and Acer has Night Light off.
+Click the small monitor button on a display's chin (or press `O`), pick an
+orientation, and watch the card turn. Screens next to it slide over so your
+pointer still crosses cleanly. Keep it, or do nothing and it reverts in 20 seconds.
 
-<img src="preview-night-light.png" alt="Independent Night Light settings: MSI 4000 K, LG 5000 K and Acer off, with MSI's temperature menu open." width="1000">
+<a href="preview-rotation.png"><img src="preview-rotation.png" alt="Rotation menu opened from the Acer's chin button: Landscape standard, Portrait turned right (checked), Landscape upside down and Portrait turned left, beside the portrait Acer card." width="1000"></a>
+
+[How rotation works →](#rotate-a-display)
 
 ## A place for every display.
 
-Drag screens into position, or choose left, right, above or below. Preview the
-layout, apply it, and keep it only when it feels right.
+Drag portrait and landscape screens into position, or choose left, right,
+above or below. Preview the layout, apply it, and keep it if it feels right.
 
-<img src="preview-detail.png" alt="The new arrangement view: drag-and-snap positioning, directional controls and a preview before applying changes." width="1000">
+<a href="preview-detail.png"><img src="preview-detail.png" alt="Arrangement view: MSI, LG and the portrait Acer as tiles in desktop space, with placement buttons and Apply arrangement." width="1000"></a>
 
-[Main panel](assets/screenshots/displays.png) · [Night Light menu](assets/screenshots/night-light.png) · [Arrangement](assets/screenshots/arrangement.png)
+## Night Light for each monitor.
+
+Each monitor keeps its own saved temperature. Its menu opens directly from its
+toggle, while the monitor details stay visible.
+[See the Night Light menu →](assets/screenshots/night-light.png)
+
+Full-size captures: [Main panel](assets/screenshots/displays.png) · [Rotation](assets/screenshots/rotation.png) · [Arrangement](assets/screenshots/arrangement.png) · [Night Light](assets/screenshots/night-light.png)
 
 This is an **unofficial fork** of Omarchy's `omarchy.monitor` widget, originally
 vendored from Omarchy 4.0.0 under MIT. It is not affiliated with or supported by
@@ -63,7 +73,7 @@ and scale. Preferred-mode entries resolve to an advertised mode matching that
 geometry, preserving the running refresh rate when possible. Use the Hz chip to
 choose a different advertised rate.
 
-## Use the Panel
+## Use the panel
 
 Click the monitor icon in the bar to open the panel.
 
@@ -71,6 +81,7 @@ Click the monitor icon in the bar to open the panel.
 |---|---|
 | Monitor screen | Focus that desktop; editing a setting never changes its target |
 | On/Off switch | Persistently toggle that monitor; the last usable screen is protected |
+| Rotation button (chin) | Choose landscape, portrait (either way) or upside down, then Keep within 20 seconds |
 | Resolution / Hz / scale chip | Click, choose a supported value, then Keep within 20 seconds |
 | Arrange… | Preview positions by dragging or using placement buttons, then Apply |
 | Night Light | Open a menu anchored to its toggle (above when space is tight); choose Off or 2500–5000 K while monitor details remain visible |
@@ -113,6 +124,7 @@ timeout or an already-finished preview is not shown as a red error.
 | Enter/Space | Focus the selected display, choose an option, or activate Keep/Revert |
 | `m` / `r` / `s` | Open resolution / refresh / scale for the selected display |
 | `t` | Open Night Light for the selected display |
+| `o` | Open rotation for the selected display |
 | `p` | Toggle the selected display |
 | `a` | Open/close Arrange |
 | `?` | Expand/collapse More shortcuts |
@@ -138,7 +150,7 @@ o.bind("SUPER + SHIFT + CTRL + 3", "Toggle display 3",
 Descriptions also appear in Omarchy's `SUPER+K` keybindings sheet. Adjust the
 plugin path if you installed it under a different ID.
 
-## Command Line
+## Command line
 
 The executable lives inside the plugin; installation does not add it to `PATH`.
 Use its full path, or enable the short command for the current shell:
@@ -161,6 +173,7 @@ monitor-switcher scale-trial MSI 1.875    # same setting with Keep/Revert
 monitor-switcher focus LG                # focus without changing monitor power
 monitor-switcher mode MSI 2560x1440@239.85 # try an exact advertised mode
 monitor-switcher refresh MSI 240         # begin trial; prints confirmation token
+monitor-switcher rotate Acer 90          # rotation trial: 0, 90, 180, 270, next, prev
 monitor-switcher confirm <token>         # keep the trial mode
 monitor-switcher revert <token>          # restore previous settings
 monitor-switcher apply                   # apply the saved layout
@@ -171,7 +184,31 @@ Refresh requests must match an advertised rate, e.g. `74.98` rather than `75`
 when the monitor advertises `74.98`. Only connected, active monitors can start
 a refresh trial.
 
-### Arrange Displays
+### Rotate a display
+
+Click the small monitor button on a display's chin (or press `o`) and choose an
+orientation. The card reshapes, the screen turns, and **Keep** saves it. If a
+sideways pointer makes that awkward, do nothing: it reverts after 20 seconds.
+Labels describe which way you physically turn the monitor, so choose
+**Portrait · turned right** after turning it clockwise.
+
+A turned screen changes its desktop footprint, so the switcher treats it like a
+pivot stand: in a row the screen keeps its left edge and centres vertically, and
+displays to its right slide over to stay touching (columns work the same way,
+downward). In other layouts it pivots about its centre, or takes the nearest
+free touching edge. If no valid layout exists, rotation is refused before
+anything changes; use Arrange first. Half turns (0°↔180°) move nothing.
+
+```bash
+monitor-switcher rotate Acer 90      # 0, 90, 180, 270; next/prev turn by 90°
+monitor-switcher rotate 3 t5         # raw Hyprland transform 0–7 (4–7 mirror)
+```
+
+Degrees keep any mirroring configured in `transform`; the panel offers only
+the four unmirrored rotations. Touchscreen and tablet input mapping is not
+rotated by this plugin.
+
+### Arrange displays
 
 Click **Arrange…**, turn on at least two displays, and drag their rectangles to
 match your desk. Edges snap together. Alternatively select a display, choose a
@@ -233,7 +270,7 @@ Array order determines packing and shortcut numbers:
 | `alias` | Monitor model | Display name and optional CLI identifier |
 | `scale` | Current scale | Per-monitor scale factor |
 | `mode` | `preferred` | Hyprland mode, such as `3840x2160@240` |
-| `transform` | `0` | Rotation/reflection; `1` is 90 degrees, `3` is 270 degrees |
+| `transform` | `0` | Rotation/reflection; `1` is 90°, `2` is 180°, `3` is 270°; 4–7 add mirroring. Set with `rotate` or the panel |
 | `position` | Automatic packing | Optional pinned origin, such as `2048x0` |
 | `mode_w`, `mode_h` | Managed | Geometry snapshots for preferred mode; do not edit manually |
 | `identity` | Managed | EDID make/model/serial used for unambiguous connector changes |

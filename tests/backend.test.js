@@ -105,7 +105,11 @@ if (args === 'monitors all -j') {
   const monitor = live.find(m => m.name === name);
   fs.appendFileSync(path.join(home, 'bounces'), name + ' ' + (args.includes('disabled = true') ? 'off' : 'on') + '\\n');
   if (monitor) {
-    if (args.includes('disabled = true')) { monitor.disabled = true; monitor.width = monitor.height = 0; }
+    if (args.includes('disabled = true')) {
+      // Remember the running size so the re-enable restores it, like a real bounce.
+      if (monitor.width > 0 && monitor.height > 0 && !monitor.wedged) { monitor.baseWidth = monitor.width; monitor.baseHeight = monitor.height; }
+      monitor.disabled = true; monitor.width = monitor.height = 0;
+    }
     else if (control.wedgeForever && monitor.wedged) {
       // The driver stays wedged: the enable does not restore a mode.
       monitor.disabled = false; monitor.width = monitor.height = 0;
@@ -1178,4 +1182,136 @@ test('pack clears all pins and packs left-to-right in config order', async t => 
   assert.match(lua, /output = "DP-2", mode = "1920x1080@60", position = "1440x0"/);
   const liveNow = await f.json(path.join(f.home, 'live.json'));
   assert.deepEqual([liveNow[0].x, liveNow[1].x], [0, 1440]);
+});
+
+// --- Rotation --------------------------------------------------------------
+const row = (n, extra = {}) => Array.from({length: n}, (_, i) => ({
+  output: `DP-${i + 1}`, mode: '1920x1080@60.00', scale: 1, transform: 0, position: `${i * 1920}x0`, ...extra}));
+const liveOf = monitors => monitors.map(m => {
+  const [x, y] = m.position.split('x').map(Number);
+  return {name: m.output, width: 1920, height: 1080, scale: 1, transform: m.transform || 0, x, y,
+    refreshRate: 60, disabled: false, availableModes: ['1920x1080@60.00Hz']};
+});
+// Apply once so the generated rules describe every monitor; revert must
+// restore this exact baseline.
+async function rotationFixture(t, options) {
+  const f = await fixture(t, options);
+  await f.ok('apply');
+  const config = await readFile(f.config, 'utf8'), lua = await readFile(f.generated, 'utf8');
+  f.unchanged = async () => {
+    assert.equal(await readFile(f.config, 'utf8'), config);
+    assert.equal(await readFile(f.generated, 'utf8'), lua);
+  };
+  return f;
+}
+const liveBox = async (f, name) => {
+  const m = (await f.json(path.join(f.home, 'live.json'))).find(m => m.name === name);
+  return [m.x, m.y, m.transform];
+};
+
+test('rotating the middle of a row pivots it and slides right-hand neighbours to stay touching', async t => {
+  const monitors = row(3);
+  const f = await rotationFixture(t, {monitors, live: liveOf(monitors)});
+  const result = await f.ok('rotate', '2', '90');
+  assert.match(result.stdout, /DP-2 refresh rotation:1 pending/);
+  assert.deepEqual(await liveBox(f, 'DP-1'), [0, 0, 0]);
+  assert.deepEqual(await liveBox(f, 'DP-2'), [1920, -420, 1]);
+  assert.deepEqual(await liveBox(f, 'DP-3'), [3000, 0, 0]);
+  const state = JSON.parse((await f.ok('state', '--json')).stdout);
+  assert.equal(state.refreshPending.kind, 'rotation');
+  assert.equal(state.refreshPending.output, 'DP-2');
+  assert.deepEqual(state.overlaps, []);
+  assert.equal(state.monitors[1].transform, 1);
+  assert.equal(state.monitors[1].liveTransform, 1);
+  const cfg = await f.json(f.config);
+  assert.deepEqual(cfg.map(m => [m.position, m.transform, m.scale, m.mode]), [
+    ['0x0', 0, 1, '1920x1080@60.00'], ['1920x-420', 1, 1, '1920x1080@60.00'], ['3000x0', 0, 1, '1920x1080@60.00']]);
+  await f.ok('revert', (await f.json(f.pending)).token);
+  await f.unchanged();
+  await f.noPending();
+  assert.deepEqual(await liveBox(f, 'DP-3'), [3840, 0, 0]);
+});
+
+test('a kept rotation persists in config and generated rules', async t => {
+  const f = await rotationFixture(t);
+  // DP-1 is portrait (1440x2560 logical) left of DP-2; landscape is 2560x1440.
+  await f.ok('rotate', 'Main', '0');
+  const token = (await f.json(f.pending)).token;
+  await f.ok('confirm', token);
+  await f.noPending();
+  const cfg = await f.json(f.config);
+  assert.equal(cfg[0].transform, 0);
+  assert.equal(cfg[0].position, '-1440x660');
+  assert.equal(cfg[1].position, '1120x0');
+  const lua = await readFile(f.generated, 'utf8');
+  assert.match(lua, /output = "DP-1", mode = "3840x2160@60.00", position = "-1440x660", scale = 1.5, transform = 0/);
+  assert.match(lua, /output = "DP-2", mode = "1920x1080@60", position = "1120x0", scale = 1, transform = 0/);
+});
+
+test('a vertical stack rotates about the centre and pushes lower desktops down', async t => {
+  const monitors = [
+    {output: 'DP-1', mode: '1920x1080@60.00', scale: 1, transform: 0, position: '0x0'},
+    {output: 'DP-2', mode: '1920x1080@60.00', scale: 1, transform: 0, position: '0x1080'}];
+  const f = await rotationFixture(t, {monitors, live: liveOf(monitors)});
+  await f.ok('rotate', 'DP-1', '270');
+  assert.deepEqual(await liveBox(f, 'DP-1'), [420, 0, 3]);
+  assert.deepEqual(await liveBox(f, 'DP-2'), [0, 1920, 0]);
+});
+
+test('a half turn keeps the footprint and moves nothing', async t => {
+  const monitors = row(2);
+  const f = await rotationFixture(t, {monitors, live: liveOf(monitors)});
+  await f.ok('rotate', 'DP-1', '180');
+  assert.deepEqual(await liveBox(f, 'DP-1'), [0, 0, 2]);
+  assert.deepEqual(await liveBox(f, 'DP-2'), [1920, 0, 0]);
+  const cfg = await f.json(f.config);
+  assert.deepEqual(cfg.map(m => m.position), ['0x0', '1920x0']);
+});
+
+test('a stranded pivot in an L layout takes the nearest free touching edge', async t => {
+  const monitors = [
+    {output: 'DP-1', mode: '1920x1080@60.00', scale: 1, transform: 0, position: '0x0'},
+    {output: 'DP-2', mode: '1920x1080@60.00', scale: 1, transform: 0, position: '1920x0'},
+    {output: 'DP-3', mode: '1920x1080@60.00', scale: 1, transform: 0, position: '0x1080'}];
+  const f = await rotationFixture(t, {monitors, live: liveOf(monitors)});
+  await f.ok('rotate', 'DP-2', '90');
+  assert.deepEqual(await liveBox(f, 'DP-1'), [0, 0, 0]);
+  assert.deepEqual(await liveBox(f, 'DP-2'), [1920, -420, 1]);
+  assert.deepEqual(await liveBox(f, 'DP-3'), [0, 1080, 0]);
+  assert.deepEqual(JSON.parse((await f.ok('state', '--json')).stdout).overlaps, []);
+});
+
+test('rotation values: next/prev turn by 90°, degrees keep mirroring, t0–t7 are raw', async t => {
+  const monitors = row(2, {});
+  monitors[0].transform = 5;
+  const live = liveOf(monitors);
+  const f = await rotationFixture(t, {monitors, live});
+  // Degrees keep the mirror bit: 90° on a flipped panel is transform 5 → already there.
+  assert.match((await f.ok('rotate', 'DP-1', '90')).stdout, /already at that rotation/);
+  await f.noPending();
+  for (const [value, expected] of [['next', 6], ['prev', 4], ['t2', 2], ['270', 7], ['Normal', 4]]) {
+    await f.ok('rotate', 'DP-1', value);
+    assert.equal((await f.json(f.config))[0].transform, expected, value);
+    await f.ok('revert', (await f.json(f.pending)).token);
+  }
+  await f.unchanged();
+});
+
+test('rotation refuses bad values, unknown, disabled and pending targets without writes', async t => {
+  const f = await fixture(t, {disabled: ['DP-2']});
+  f.live[1] = {...f.live[1], disabled: true, width: 0, height: 0};
+  await writeFile(path.join(f.home, 'live.json'), JSON.stringify(f.live));
+  for (const [args, message] of [[['DP-1', '45'], /rotation must be/], [['DP-1', 't8'], /rotation must be/],
+    [['NOPE', '90'], /unknown monitor/], [['DP-2', '90'], /connected and active to rotate/]]) {
+    const result = await f.run('rotate', ...args);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, message);
+    await f.unchanged();
+    await f.noPending();
+  }
+  assert.equal((await f.run('rotate', 'DP-1')).code, 1);
+  await f.ok('rotate', 'DP-1', '0');
+  assert.equal((await f.run('rotate', 'DP-1', '180')).code, 75);
+  await f.ok('revert', (await f.json(f.pending)).token);
+  await f.unchanged();
 });

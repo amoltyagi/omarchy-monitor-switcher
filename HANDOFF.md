@@ -251,3 +251,42 @@ This is an artwork/documentation correction; version remains 3.1.0. Its tag
 still identifies the released implementation, while updated artwork is committed
 on main and referenced by immutable commit URLs in the edited release body.
 The GitHub release attachments are replaced by just the three reviewed previews.
+
+## 3.2.0 — Monitor rotation (September 25, 2026)
+
+### Design
+- Chin button (bottom-right of each monitor casing) → popup with four
+  orientations and glyphs; `O` opens it. It is a popup editor like Night Light
+  (`DisplayGallery.popupEditor`), so specifications stay visible. Scrolling
+  closes it.
+- `monitor-switcher rotate <id> <0|90|180|270|next|prev|t0–t7>` is always a
+  Keep/Revert trial (`start_trial … "rotation:<t>"`; `state` reports
+  `refreshPending.kind == "rotation"`). Degrees preserve the mirror bit.
+- `reflow_rotated` (pivot stand): row → keep left edge, centre vertically,
+  shift right-hand boxes by Δw; column → keep top edge, centre horizontally,
+  shift lower boxes by Δh; otherwise pivot about the centre. If that
+  overlaps or disconnects, take `nearest_free_edge`; if that fails too,
+  refuse before any write. Same-footprint turns move nothing.
+- `boxes_connected` / `nearest_free_edge` are now shared by Arrange,
+  returning-display placement and rotation.
+- `Model.galleryLayout` gives each card a slot ≥ minimumWidth (`slotX`,
+  `slotWidth`); portrait art keeps true proportions centred in its slot
+  (min 0.62 × minimum width) and its specification row stacks. Galleries with only
+  landscape monitors are unchanged.
+- `Model.ROTATION_90_TURNS = "right"`: verified on the user's Acer, where
+  transform 1 is upright with the monitor turned clockwise.
+
+### Verification
+- Frozen full run: 117/117 Node (incl. 7 rotation backend cases), 15/15 QML,
+  Python OK, qmllint, `bash -n`, `git diff --check`, plugin validate.
+- Live: panel keyboard path (`l l o`, `j`, Enter) started a 90° trial on the
+  Acer that timed out and reverted; CLI 270° trial kept; exact files and live
+  layout restored. A pure rotation triggers the existing relayout bounce
+  (position changed); acceptable, possible future optimisation.
+
+### Artwork
+- Captured with `grim -o DP-3` on MSI (3840×2160, 187.5%) of the user's live
+  desk (Acer portrait, LG Night Light 4000 K); crops masked outside the panel.
+- README/release images: `preview.png`, `preview-rotation.png`,
+  `preview-detail.png`; `night-light.png` linked. `preview-night-light.png`
+  was retired (old releases use immutable commit URLs).

@@ -197,5 +197,94 @@ Item {
       mouseClick(toggle, toggle.width / 2, toggle.height / 2)
       compare(powerSpy.count, 1)
     }
+
+    function test_rotation_opens_from_the_chin_and_targets_its_own_display() {
+      arrangement.visible = false
+      gallery.visible = true
+      wait(100)
+      var button = findChild(gallery, "rotation-DP-2")
+      verify(button !== null)
+      mouseClick(button, button.width / 2, button.height / 2)
+      compare(gallery.editorOutput, "DP-2")
+      compare(gallery.editorField, "rotation")
+      verify(button.popup.visible)
+      compare(button.popup.parent, button)
+      verify(findChild(gallery, "specifications-DP-2").visible, "rotation keeps the screen specifications visible")
+      compare(gallery.choices.length, 4)
+      compare(gallery.editorInitialIndex, 0, "current landscape rotation is marked")
+      gallery.applyEditor()
+      compare(settingSpy.count, 0, "choosing the current rotation is a no-op")
+      mouseClick(button, button.width / 2, button.height / 2)
+      wait(50) // let the previous opening's delegates be destroyed
+      var option = findChild(button.popup.contentItem, "rotation-option-90")
+      compare(option.modelData.value, "90")
+      verify(option !== null)
+      mouseClick(option, option.width / 2, option.height / 2)
+      compare(settingSpy.count, 1)
+      compare(settingSpy.signalArguments[0][0], "rotate")
+      compare(settingSpy.signalArguments[0][1], "DP-2")
+      compare(settingSpy.signalArguments[0][2], "90")
+      compare(gallery.editorOutput, "")
+    }
+
+    function test_rotation_is_unavailable_for_an_unusable_display() {
+      arrangement.visible = false
+      gallery.visible = true
+      gallery.monitors = [fixture[0], Object.assign({}, fixture[1], {usable: false, enabled: false})]
+      wait(50)
+      var button = findChild(gallery, "rotation-DP-2")
+      compare(button.enabled, false)
+      gallery.openEditor(1, "rotation")
+      compare(gallery.editorOutput, "")
+    }
+
+    function test_portrait_card_keeps_readable_non_overlapping_controls() {
+      arrangement.visible = false
+      gallery.visible = true
+      gallery.monitors = [
+        Object.assign({}, fixture[0], {physicalWidth: 590, physicalHeight: 330}),
+        Object.assign({}, fixture[1], {physicalWidth: 600, physicalHeight: 340, liveTransform: 1, transform: 1}),
+        Object.assign({}, fixture[0], {output: "HDMI-A-1", physicalWidth: 890, physicalHeight: 390})
+      ]
+      for (var w of [480, 760, 1060]) {
+        gallery.width = w
+        wait(450)
+        var bezel = findChild(gallery, "bezel-DP-2")
+        verify(bezel.height > bezel.width, "portrait art is taller than wide at " + w)
+        var resolution = findChild(gallery, "resolution-group-DP-2")
+        var row = findChild(gallery, "specification-row-DP-2")
+        verify(resolution.y + resolution.height + 4 <= row.y, "portrait specs do not overlap at " + w)
+        var power = findChild(gallery, "power-DP-2")
+        var night = findChild(gallery, "nightlight-DP-2")
+        verify(night.width >= night.implicitWidth - 0.5 || night.width >= 150, "Night Light label stays readable at " + w)
+        verify(power.width <= power.parent.width + 0.5)
+        var rotate = findChild(gallery, "rotation-DP-2")
+        var r = rotate.mapToItem(bezel, 0, 0)
+        verify(r.x >= 0 && r.x + rotate.width <= bezel.width + 0.5, "rotate button stays on the chin at " + w)
+        for (var m of gallery.monitors) {
+          var a = findChild(gallery, "bezel-" + m.output).parent
+          for (var n of gallery.monitors) {
+            if (n.output <= m.output) continue
+            var b = findChild(gallery, "bezel-" + n.output).parent
+            verify(a.x + a.width <= b.x + 0.5 || b.x + b.width <= a.x + 0.5 || a.y + a.height <= b.y + 0.5 || b.y + b.height <= a.y + 0.5,
+              "cards " + m.output + " and " + n.output + " overlap at " + w)
+          }
+        }
+      }
+    }
+
+    function test_rotation_popup_opens_upward_near_window_bottom() {
+      arrangement.visible = false
+      gallery.visible = true
+      gallery.y = 260
+      gallery.openEditor(1, "rotation")
+      wait(100)
+      var button = findChild(gallery, "rotation-DP-2")
+      verify(button.popup.visible)
+      verify(button.popup.y < 0, "open above the chin when there is no room below")
+      var point = button.popup.contentItem.mapToItem(null, 0, 0)
+      verify(point.y >= 0)
+      verify(point.y + button.popup.contentItem.height <= 650)
+    }
   }
 }

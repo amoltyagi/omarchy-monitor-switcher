@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="2033" height="1056" viewBox="0 0 2033 1056">
-  <defs><clipPath id="panel"><rect x="20" y="112" width="1993" height="924" rx="38"/></clipPath></defs>
-  <rect width="2033" height="1056" fill="#0b0c15"/>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="2033" height="1050" viewBox="0 0 2033 1050">
+  <defs><clipPath id="panel"><rect x="20" y="112" width="1993" height="918" rx="38"/></clipPath></defs>
+  <rect width="2033" height="1050" fill="#0b0c15"/>
   <g font-family="Liberation Sans, Arial, sans-serif">
     <text x="28" y="47" fill="#d4edf5" font-size="39" font-weight="700">Arrange your desk.</text>
-    <text x="28" y="84" fill="#a8bac3" font-size="26">Drag, snap, preview — then apply.</text>
+    <text x="28" y="84" fill="#a8bac3" font-size="26">Portrait or landscape: drag, snap, preview, then apply.</text>
     <text x="2005" y="48" text-anchor="end" fill="#7ae99c" font-size="23">MONITOR SWITCHER</text>
   </g>
-  <image x="20" y="112" width="1993" height="924" clip-path="url(#panel)" xlink:href="screenshots/arrangement.png"/>
+  <image x="20" y="112" width="1993" height="918" clip-path="url(#panel)" xlink:href="screenshots/arrangement.png"/>
 </svg>

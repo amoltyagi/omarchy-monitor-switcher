@@ -183,3 +183,57 @@ test('gallery wraps before physical monitor illustrations crowd their controls',
     for (const box of boxes) assert.ok(box.height >= 160)
   }
 })
+
+test('portrait cards keep true proportions inside a readable slot, without overlap', () => {
+  const landscape = {physicalWidth: 600, physicalHeight: 340}
+  const portrait = {physicalWidth: 600, physicalHeight: 340, transform: 1}
+  const ultrawide = {physicalWidth: 890, physicalHeight: 390}
+  for (const monitors of [[landscape, portrait, ultrawide], [portrait, portrait], [portrait]]) {
+    for (const width of [456, 736, 1036]) {
+      const {boxes, height} = Model.galleryLayout(monitors, width, 22, 190, 230, 94, 160)
+      assert.equal(boxes.length, monitors.length)
+      boxes.forEach((box, i) => {
+        const s = Model.physicalSize(monitors[i])
+        assert.ok(Math.abs(box.width / box.height - s.width / s.height) < 1e-6, 'true proportions')
+        assert.ok(box.slotWidth >= Math.min(190, width) - 1e-6, 'readable control slot')
+        assert.ok(box.x >= box.slotX - 1e-6 && box.x + box.width <= box.slotX + box.slotWidth + 1e-6, 'art inside slot')
+        assert.ok(box.slotX >= -1e-6 && box.slotX + box.slotWidth <= width + 1e-6, 'slot inside gallery')
+        assert.ok(box.y >= 0 && box.y + box.height < height)
+        if (s.height > s.width) assert.ok(box.width >= 190 * Model.PORTRAIT_MINIMUM_FRACTION - 1e-6)
+        else assert.ok(box.height >= 160 - 1e-6 || boxes.length === 1)
+      })
+      for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i], b = boxes[j]
+        const apart = a.slotX + a.slotWidth <= b.slotX + 1e-6 || b.slotX + b.slotWidth <= a.slotX + 1e-6
+          || a.y + a.height <= b.y || b.y + b.height <= a.y
+        assert.ok(apart, `cards overlap at ${width}`)
+      }
+    }
+  }
+  // Landscape-only galleries keep their previous geometry: slot == art.
+  const {boxes} = Model.galleryLayout([landscape, ultrawide], 1036, 22, 190, 230, 94, 160)
+  for (const box of boxes) { assert.equal(box.slotX, box.x); assert.equal(box.slotWidth, box.width) }
+})
+
+test('rotation choices, labels and current-value matching', () => {
+  const choices = Model.rotationChoices()
+  assert.deepEqual(choices.map(c => c.value), ['0', '90', '180', '270'])
+  assert.deepEqual(Model.cardChoices({}, 'rotation'), choices)
+  assert.equal(new Set(choices.map(c => c.label)).size, 4)
+  assert.match(Model.rotationLabel(0), /Landscape/)
+  assert.match(Model.rotationLabel(90), /Portrait/)
+  assert.match(Model.rotationLabel(180), /upside down/)
+  assert.match(Model.rotationLabel(270), /Portrait/)
+  assert.notEqual(Model.rotationLabel(90), Model.rotationLabel(270))
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7].map(Model.rotationDegrees), [0, 90, 180, 270, 0, 90, 180, 270])
+  assert.equal(Model.rotationDegrees(undefined), 0)
+  const angles = [0, 90, 180, 270].map(Model.rotationGlyphAngle)
+  assert.deepEqual(angles.map(Math.abs), [0, 90, 180, 90])
+  assert.equal(angles[1], -angles[3], 'the two portrait glyphs turn opposite ways')
+  assert.equal(Model.rotationGlyphAngle(-90), Model.rotationGlyphAngle(270))
+  const display = {usable: true, liveTransform: 1}
+  assert.equal(Model.settingIsCurrent(display, 'rotation', '90'), true)
+  assert.equal(Model.settingIsCurrent(display, 'rotation', '0'), false)
+  assert.equal(Model.settingIsCurrent({usable: true, liveTransform: 5}, 'rotation', '90'), true)
+  assert.equal(Model.settingIsCurrent({usable: false, liveTransform: 1}, 'rotation', '90'), false)
+})

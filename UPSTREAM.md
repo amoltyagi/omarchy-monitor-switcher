@@ -20,14 +20,15 @@ local features.
 |---|---|
 | `Panel.qml` | Popup, one backend snapshot, action processes, brightness/text size, keyboard help |
 | `PanelRegistry.js` | Elect one IPC owner across per-screen instances; route to focused screen |
-| `DisplayGallery.qml` | Adaptive physical monitor gallery, toggle-anchored Night Light and trial confirmation |
+| `DisplayGallery.qml` | Adaptive physical monitor gallery, chin rotation menu, toggle-anchored Night Light and trial confirmation |
 | `SettingChip.qml` | Rounded, visibly editable setting/button with hover and keyboard feedback |
 | `MonitorPowerToggle.qml` | Below-monitor power switch and pending feedback |
+| `OrientationGlyph.qml` | Tiny monitor glyph showing a rotation, used on the chin button and its menu |
 | `ArrangementEditor.qml` | Draft desktop layout, dragging, snap preview and relative placement |
 | `Model.js` | Pure scale/mode, physical geometry and arrangement helpers |
 | `DragSlider.qml` | Wheel-safe brightness/text-size sliders |
 | `MonitorLogo.qml` | Theme-tinted vector identity |
-| `bin/monitor-switcher` | Persistent config/state, collision-free returning monitors, verified actions and rollback |
+| `bin/monitor-switcher` | Persistent config/state, collision-free returning monitors, rotation reflow, verified actions and rollback |
 | `bin/monitor-nightlight.py` | Per-output gamma controls, saved temperature preferences and hotplug replay |
 | `bin/monitor-action` | Detached display changes that survive their originating panel |
 

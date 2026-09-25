@@ -2,9 +2,9 @@
   <defs><clipPath id="panel"><rect x="20" y="112" width="1993" height="1024" rx="38"/></clipPath></defs>
   <rect width="2033" height="1156" fill="#0b0c15"/>
   <g font-family="Liberation Sans, Arial, sans-serif">
-    <text x="28" y="47" fill="#d4edf5" font-size="39" font-weight="700">Your displays. One place.</text>
-    <text x="28" y="84" fill="#a8bac3" font-size="26">Resolution, refresh rate, scale, rotation, power and layout.</text>
+    <text x="28" y="47" fill="#d4edf5" font-size="39" font-weight="700">Turn it portrait.</text>
+    <text x="28" y="84" fill="#a8bac3" font-size="26">One click on the chin. Neighbours slide to stay touching. Keep it, or it reverts in 20 s.</text>
     <text x="2005" y="48" text-anchor="end" fill="#7ae99c" font-size="23">MONITOR SWITCHER</text>
   </g>
-  <image x="20" y="112" width="1993" height="1024" clip-path="url(#panel)" xlink:href="screenshots/displays.png"/>
+  <image x="20" y="112" width="1993" height="1024" clip-path="url(#panel)" xlink:href="screenshots/rotation.png"/>
 </svg>

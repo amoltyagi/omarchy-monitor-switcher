@@ -241,6 +241,7 @@ Panel {
     else if (text === "r") gallery.openEditor(selectedIndex, "refresh")
     else if (text === "s") gallery.openEditor(selectedIndex, "scale")
     else if (text === "t") gallery.openEditor(selectedIndex, "nightlight")
+    else if (text === "o") gallery.openEditor(selectedIndex, "rotation")
     else if (text === "p") {
       var m = galleryMonitors[selectedIndex]
       if (m) toggleDisplay(m.output, m.enabled)
@@ -484,12 +485,12 @@ Panel {
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: panelColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
         Binding { target: scrollArea.contentItem; property: "interactive"; value: panelColumn.implicitHeight > scrollArea.height }
-        // Scrolling moves the chip beneath its open Night Light popup, whose
-        // above/below placement cannot track that: close the editor instead.
+        // Scrolling moves the control beneath its open popup (Night Light or
+        // rotation), whose above/below placement cannot track that: close it.
         Connections {
           target: scrollArea.contentItem
           function onContentYChanged() {
-            if (gallery.editorField === "nightlight") gallery.closeEditor()
+            if (gallery.popupEditor) gallery.closeEditor()
           }
         }
 
@@ -786,6 +787,7 @@ Panel {
                   ["Enter / Space", "Focus a display or apply the selected option"],
                   ["M / R / S", "Open resolution / refresh rate / scaling settings"],
                   ["T", "Open Night Light temperature for this display"],
+                  ["O", "Rotate the selected display (portrait or landscape)"],
                   ["P", "Turn the selected display on or off"],
                   ["A", "Open display arrangement"],
                   ["Esc", "Close settings, then close the panel"]

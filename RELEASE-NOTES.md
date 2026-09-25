@@ -1,33 +1,38 @@
-# Monitor Switcher
+# Monitor Switcher 3.2 — Rotation
 
-Your displays. One place.
+Your displays. One place. Now in portrait, too.
 
-Manage resolution, refresh rate, scale, power and desktop layout from one panel.
+Manage resolution, refresh rate, scale, rotation, power and desktop layout from one panel.
 
-![Monitor management panel with display settings, power controls and Arrange](preview.png)
+![Monitor Switcher panel with MSI and LG in landscape and the Acer in portrait](preview.png)
 
-- Edit settings directly on each display and try changes with 20-second Keep/Revert.
-- Drag and snap desktops together; the switcher makes room when a middle monitor returns.
-- Restore the last verified working layout for your connected monitors.
-- Use a gallery that adapts to screen size and scale, with readable controls.
+## Turn it portrait
 
-Night Light is one of the panel's features: choose warmth separately for each
-monitor, or leave selected screens in daylight. Preferences persist across
-reloads and reboots.
+Every monitor now has a small rotation button on its chin. Click it (or press
+`O`), choose **Landscape**, **Portrait · turned right**, **Portrait · turned
+left** or **Upside down**, and watch the card turn.
 
-![MSI at 4000 K, LG at 5000 K and Acer off, with an independent temperature menu](preview-night-light.png)
+![Rotation menu opened from the Acer's chin, Portrait · turned right checked](preview-rotation.png)
 
-Preview your desktop arrangement before applying it.
+- **Neighbours make room.** Rotation works like a pivot stand. In a row the
+  screen keeps its left edge, and displays to its right slide over so your
+  pointer still crosses cleanly. Columns do the same downward. Other layouts
+  use the nearest free edge.
+- **Nothing can strand you.** Every rotation is a verified 20-second
+  Keep/Revert trial. Do nothing and your previous layout comes back.
+  Impossible layouts are refused before anything changes.
+- **Portrait looks portrait.** Cards keep their true shape, controls stack to
+  stay readable, and Arrange shows the new footprint.
+- **Scriptable.** `monitor-switcher rotate Acer 90` (also `0`, `180`, `270`,
+  `next`, `prev`) for keybinds and scripts.
 
-![Drag-and-snap arrangement with the Apply action](preview-detail.png)
+## Arrange around it
 
-Power changes continue if the initiating screen turns off, and rollback verifies
-the restored layout.
+![Arrangement with the portrait Acer beside MSI and LG](preview-detail.png)
 
-**3.1.2 + 3.1.3 — display reliability.** Recovers from the NVIDIA/aquamarine
-driver wedge (an enabled monitor stuck modeless at 0×0) without a reboot, and
-re-lays out clients after a monitor is enabled, re-scaled or moved, so apps no
-longer render cut off at the screen edge or keep a stale fractional scale.
+Night Light per monitor, power toggles, verified recovery and every existing
+setting and shortcut carry forward.
+[See the Night Light menu](assets/screenshots/night-light.png).
 
 Update with:
 
@@ -35,6 +40,4 @@ Update with:
 omarchy plugin update case.monitor-switcher
 ```
 
-Existing settings and shortcuts carry forward.
-
-[Full changelog](CHANGELOG.md) · [Implementation and verification handoff](HANDOFF.md)
+[Full changelog](CHANGELOG.md) · [README](README.md)

@@ -28,6 +28,7 @@
 #   monitor-switcher focus <id>          Focus a usable monitor (never changes power)
 #   monitor-switcher mode <id> <WxH@Hz>  Try an advertised resolution for 20 seconds
 #   monitor-switcher refresh <id> <Hz>    Try an advertised rate for 20 seconds
+#   monitor-switcher rotate <id> <0|90|180|270|next|prev>  Try a rotation for 20 seconds
 #   monitor-switcher confirm <token>     Keep the pending refresh change
 #   monitor-switcher revert <token>      Restore the previous config and layout
 #   monitor-switcher apply            Regenerate layout from config + reload
@@ -531,6 +532,47 @@ find_overlap() { # <boxes-json>
          | join("; ")' <<<"$1"
 }
 
+# Every desktop must share an edge segment (not only a corner) with the rest,
+# so the pointer can travel between all screens. Succeeds for 0–1 boxes.
+boxes_connected() { # <boxes-json>
+  jq -e '
+    def touches($a; $b):
+      ((($a.x + $a.w == $b.x) or ($b.x + $b.w == $a.x)) and
+        ([$a.y + $a.h, $b.y + $b.h] | min) > ([$a.y, $b.y] | max)) or
+      ((($a.y + $a.h == $b.y) or ($b.y + $b.h == $a.y)) and
+        ([$a.x + $a.w, $b.x + $b.w] | min) > ([$a.x, $b.x] | max));
+    if length < 2 then true else
+      . as $boxes | reduce range(0; length) as $i ([$boxes[0]];
+        . as $seen | $seen + [$boxes[] as $b | select(any($seen[]; touches(.; $b))) | $b] | unique_by(.output))
+      | length == ($boxes | length) end
+  ' <<<"$1" > /dev/null
+}
+
+# Nearest touching, non-overlapping placement for one box while every other
+# box stays fixed. stdout: the moved box, or null when <force> is false and
+# the box already fits. Fails when no edge is free.
+nearest_free_edge() { # <boxes-json> <output> <force:true|false>
+  jq --arg o "$2" --argjson force "$3" '
+    def overlaps($a; $b):
+      $a.x < $b.x + $b.w and $b.x < $a.x + $a.w and
+      $a.y < $b.y + $b.h and $b.y < $a.y + $a.h;
+    ([.[] | select(.output == $o)][0]) as $m
+    | [.[] | select(.output != $o)] as $others
+    | if $m == null or (($force | not) and (any($others[]; overlaps(.; $m)) | not)) then null
+      else
+        [$others[] as $a |
+          ([$a.y, $a.y + $a.h - $m.h,
+             ([$a.y - $m.h + 1, ([$m.y, $a.y + $a.h - 1] | min)] | max)][] as $y |
+            $m + {x: ($a.x + $a.w), y: $y}, $m + {x: ($a.x - $m.w), y: $y}),
+          ([$a.x, $a.x + $a.w - $m.w,
+             ([$a.x - $m.w + 1, ([$m.x, $a.x + $a.w - 1] | min)] | max)][] as $x |
+            $m + {x: $x, y: ($a.y + $a.h)}, $m + {x: $x, y: ($a.y - $m.h)})]
+        | map(. as $candidate | select(all($others[]; overlaps(.; $candidate) | not)))
+        | sort_by((.x - $m.x)*(.x - $m.x) + (.y - $m.y)*(.y - $m.y), .y, .x)
+        | .[0] // error("no free edge for display " + $o)
+      end' <<<"$1"
+}
+
 # Re-enabling an output may find its saved slot occupied after an arrangement.
 # Reopen horizontal slots by shifting right-hand desktops; otherwise keep
 # active desktops fixed and use the nearest free touching edge. All geometry
@@ -558,25 +600,7 @@ place_returning_display() { # <output> <live-json>
     printf "%s\n" "$cfg" | write_file "$CONFIG_FILE"
     return
   fi
-  placed=$(jq --arg o "$1" '
-    def overlaps($a; $b):
-      $a.x < $b.x + $b.w and $b.x < $a.x + $a.w and
-      $a.y < $b.y + $b.h and $b.y < $a.y + $a.h;
-    ([.[] | select(.output == $o)][0]) as $m
-    | [.[] | select(.output != $o)] as $others
-    | if $m == null or (any($others[]; overlaps(.; $m)) | not) then null
-      else
-        [$others[] as $a |
-          ([$a.y, $a.y + $a.h - $m.h,
-             ([$a.y - $m.h + 1, ([$m.y, $a.y + $a.h - 1] | min)] | max)][] as $y |
-            $m + {x: ($a.x + $a.w), y: $y}, $m + {x: ($a.x - $m.w), y: $y}),
-          ([$a.x, $a.x + $a.w - $m.w,
-             ([$a.x - $m.w + 1, ([$m.x, $a.x + $a.w - 1] | min)] | max)][] as $x |
-            $m + {x: $x, y: ($a.y + $a.h)}, $m + {x: $x, y: ($a.y - $m.h)})]
-        | map(. as $candidate | select(all($others[]; overlaps(.; $candidate) | not)))
-        | sort_by((.x - $m.x)*(.x - $m.x) + (.y - $m.y)*(.y - $m.y), .y, .x)
-        | .[0] // error("no free edge for returning display")
-      end' <<<"$boxes") || return 1
+  placed=$(nearest_free_edge "$boxes" "$1" false) || return 1
   [[ $placed != null ]] || return 0
   # Pin the resolved boxes so an unpinned successor cannot follow the moved output.
   cfg=$(jq --argjson boxes "$boxes" --argjson placed "$placed" '
@@ -584,6 +608,76 @@ place_returning_display() { # <output> <live-json>
       | if .output == $placed.output then .position = "\($placed.x)x\($placed.y)"
         elif $b != null then .position = "\($b.x)x\($b.y)" else . end)' <<<"$cfg") || return 1
   printf "%s\n" "$cfg" | write_file "$CONFIG_FILE"
+}
+
+# Rotation changes a desktop's footprint (odd transforms swap width/height).
+# Behave like a pivot stand: the screen turns about its centre on the
+# cross-axis, and neighbours slide along the main axis to stay touching.
+#   Row (shared vertical band): left edge stays, right-hand desktops shift by Δw.
+#   Column (shared horizontal band): top edge stays, lower desktops shift by Δh.
+#   Otherwise: pivot about the centre; if that collides or strands a desktop,
+#   take the nearest free touching edge while every other desktop stays put.
+# Every candidate is re-validated; a layout that cannot be made valid fails
+# here, before any transaction or file write. stdout: config with the new
+# transform and all resolved active positions pinned.
+reflow_rotated() { # <cfg-json> <live-json> <output> <transform>
+  local cfg=$1 lv=$2 output=$3 transform=$4 newcfg before after rotated placed was_connected=false
+  newcfg=$(jq --arg o "$output" --argjson t "$transform" 'map(if .output == $o then .transform = $t else . end)' <<<"$cfg")
+  before=$(layout_boxes "$cfg" "$lv")
+  after=$(layout_boxes "$newcfg" "$lv")
+  if jq -e --arg o "$output" --argjson b "$before" '
+      ([.[] | select(.output == $o)][0]) as $n | ([$b[] | select(.output == $o)][0]) as $m
+      | $n != null and $m != null and $n.w == $m.w and $n.h == $m.h' <<<"$after" > /dev/null; then
+    # Same footprint (0↔180, 90↔270): nothing moves.
+    printf '%s\n' "$newcfg"
+    return
+  fi
+  boxes_connected "$before" && was_connected=true
+  rotated=$(jq --arg o "$output" --argjson a "$after" '
+    ([.[] | select(.output == $o)][0]) as $m
+    | ([$a[] | select(.output == $o)][0]) as $n
+    | if $m == null or $n == null then error("rotation target has no active geometry") else . end
+    | ($n.w - $m.w) as $dw | ($n.h - $m.h) as $dh
+    | ($m.x + $m.w / 2) as $cx | ($m.y + $m.h / 2) as $cy
+    | if length == 1 then map(if .output == $o then .w = $n.w | .h = $n.h else . end)
+      elif (map(.y) | max) < (map(.y + .h) | min) then
+        map(if .output == $o then .w = $n.w | .h = $n.h | .y = (($cy - $n.h / 2) | round)
+            elif .x >= $m.x + $m.w then .x += $dw else . end)
+      elif (map(.x) | max) < (map(.x + .w) | min) then
+        map(if .output == $o then .w = $n.w | .h = $n.h | .x = (($cx - $n.w / 2) | round)
+            elif .y >= $m.y + $m.h then .y += $dh else . end)
+      else
+        map(if .output == $o then .w = $n.w | .h = $n.h
+            | .x = (($cx - $n.w / 2) | round) | .y = (($cy - $n.h / 2) | round) else . end)
+      end' <<<"$before") || return 1
+  if [[ -n $(find_overlap "$rotated") ]] || { [[ $was_connected == true ]] && ! boxes_connected "$rotated"; }; then
+    # Keep the pivot position as the target; move only the rotated desktop.
+    placed=$(nearest_free_edge "$rotated" "$output" true 2> /dev/null) \
+      || die "no room to rotate $output without overlapping another display; use Arrange first"
+    rotated=$(jq --argjson p "$placed" 'map(if .output == $p.output then $p else . end)' <<<"$rotated")
+    [[ -z $(find_overlap "$rotated") ]] && { [[ $was_connected != true ]] || boxes_connected "$rotated"; } \
+      || die "no room to rotate $output without overlapping another display; use Arrange first"
+  fi
+  jq --argjson boxes "$rotated" 'map(. as $c | ([$boxes[] | select(.output == $c.output)][0] // null) as $b
+    | if $b != null then .position = "\($b.x)x\($b.y)" else . end)' <<<"$newcfg"
+}
+
+# Parse a rotation request against the current transform. Degrees set the
+# rotation and keep any mirror bit; next/prev turn by 90°; t0–t7 are raw
+# Hyprland transforms (mirroring stays CLI/config-only).
+rotation_transform() { # <value> <current-transform>
+  local value=${1,,} current=$2 turn
+  case $value in
+    0|normal|landscape) turn=0 ;;
+    90) turn=1 ;;
+    180|flipped|upside-down) turn=2 ;;
+    270) turn=3 ;;
+    next|cw) turn=$(( (current + 1) & 3 )) ;;
+    prev|ccw) turn=$(( (current + 3) & 3 )) ;;
+    t[0-7]) echo "${value#t}"; return ;;
+    *) die "rotation must be 0, 90, 180, 270, next, prev or t0–t7 (got: $1)" ;;
+  esac
+  echo $(( (current & 4) | turn ))
 }
 
 # Resolve preferred against trusted geometry, preserving a running advertised
@@ -964,7 +1058,8 @@ state_json() {
          | {output: $m.name, x: ($m.x // 0), y: ($m.y // 0), w: $s[0], h: $s[1]} ]) as $boxes
     | { monitors: $monitors,
          refreshPending: ($pending | if . == null then null else {token, output, mode, expiresAt, reverting: (.reverting // false)}
-           + (if .mode == "arrangement" then {kind: "arrangement"} else {} end) end),
+           + (if .mode == "arrangement" then {kind: "arrangement"}
+              elif (.mode | startswith("rotation:")) then {kind: "rotation"} else {} end) end),
          enabledCount: ([$monitors[] | select(.usable)] | length),
         overlaps: ([$boxes | combinations(2)
                     | select(.[0].output < .[1].output)
@@ -1300,18 +1395,31 @@ cmd_arrange() { # All active displays move together; no intermediate overlaps.
   boxes=$(layout_boxes "$newcfg" "$lv")
   collision=$(find_overlap "$boxes")
   [[ -z $collision ]] || die "refusing to apply overlapping layout: $collision"
-  jq -e '
-    def touches($a; $b):
-      ((($a.x + $a.w == $b.x) or ($b.x + $b.w == $a.x)) and
-        ([$a.y + $a.h, $b.y + $b.h] | min) > ([$a.y, $b.y] | max)) or
-      ((($a.y + $a.h == $b.y) or ($b.y + $b.h == $a.y)) and
-        ([$a.x + $a.w, $b.x + $b.w] | min) > ([$a.x, $b.x] | max));
-    . as $boxes | reduce range(0; length) as $i ([$boxes[0]];
-      . as $seen | $seen + [$boxes[] as $b | select(any($seen[]; touches(.; $b))) | $b] | unique_by(.output))
-    | length == ($boxes | length)
-  ' <<<"$boxes" > /dev/null || die "display edges must touch so the pointer can move between screens"
+  boxes_connected "$boxes" || die "display edges must touch so the pointer can move between screens"
   output=$(jq -r '[.[] | select(.focused == true)][0].name // .[0].name' <<<"$lv")
   start_trial "$newcfg" "$output" arrangement
+}
+
+cmd_rotate() { # <id> <value> — always a verified Keep/Revert trial
+  local id=$1 value=$2 output lv cfg current transform newcfg
+  lv=$(prepare)
+  cfg=$(read_config)
+  output=$(resolve "$id")
+  [[ -n $output ]] || die "unknown monitor: $id (not an output, alias, or number in $CONFIG_FILE)"
+  jq -e --arg o "$output" --argjson st "$(read_state)" '
+    any(.[]; .name == $o and .disabled != true and .width > 0 and .height > 0
+      and (.mirrorOf // "none") == "none")
+    and (($st.disabled // [] | index($o)) == null)
+  ' <<<"$lv" > /dev/null || die "$output must be connected and active to rotate"
+  current=$(jq -r --arg o "$output" '.[] | select(.output == $o) | .transform // 0' <<<"$cfg")
+  transform=$(rotation_transform "$value" "$current")
+  if [[ $transform == "$current" ]]; then
+    echo "$output is already at that rotation"
+    return 0
+  fi
+  newcfg=$(reflow_rotated "$cfg" "$lv" "$output" "$transform")
+  [[ -z $(find_overlap "$(layout_boxes "$newcfg" "$lv")") ]] || die "refusing to apply overlapping layout after rotating $output"
+  start_trial "$newcfg" "$output" "rotation:$transform"
 }
 
 start_trial() { # <new-config> <output> <mode-or-arrangement>
@@ -1411,6 +1519,7 @@ case "${1:-}" in
   mode)    [[ $# -eq 3 ]] || usage; cmd_refresh "$2" "$3" mode ;;
   scale-trial) [[ $# -eq 3 ]] || usage; cmd_refresh "$2" "$3" scale ;;
   refresh) [[ $# -eq 3 ]] || usage; cmd_refresh "$2" "$3" ;;
+  rotate)  [[ $# -eq 3 ]] || usage; cmd_rotate "$2" "$3" ;;
   confirm) [[ $# -eq 2 ]] || usage; cmd_confirm "$2" ;;
   revert)  [[ $# -eq 2 ]] || usage; restore_refresh "$2" ;;
   recover) cmd_recover ;;

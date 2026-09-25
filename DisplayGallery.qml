@@ -26,6 +26,9 @@ Item {
   property int editorInitialIndex: 0
   readonly property var editorMonitor: monitors.find(function(m) { return m.output === gallery.editorOutput }) || ({})
   readonly property var choices: Model.cardChoices(editorMonitor, editorField)
+  // These editors open as popups anchored to their control; the others
+  // replace the screen contents.
+  readonly property bool popupEditor: editorField === "nightlight" || editorField === "rotation"
   readonly property var layout: Model.galleryLayout(monitors, Math.max(0, width - Style.space(24)),
     Style.space(22), Style.space(190), Style.space(230), Style.space(94), Style.space(160))
   implicitHeight: layout.height + Style.space(28)
@@ -49,11 +52,12 @@ Item {
     var m = monitors[index]
     if (!m || busy || stale || !m.enabled || (field === "scale" && !m.usable)) return
     if (field === "nightlight" && !(m.nightLight && m.nightLight.available && m.usable)) return
+    if (field === "rotation" && !m.usable) return
     editorOutput = m.output
     editorField = field
     var size = Model.displayDimensions(m)
     var match = choices.findIndex(function(choice) {
-      if (field === "nightlight") return Model.settingIsCurrent(m, field, choice.value)
+      if (field === "nightlight" || field === "rotation") return Model.settingIsCurrent(m, field, choice.value)
       if (field === "scale") return Math.abs(Number(choice.value) - Number(m.scale || m.configuredScale)) < 0.0001
       if (field === "mode") return choice.label === size.width + " × " + size.height
       return Math.round(Number(choice.value.split("@")[1]) * 100) === Math.round(Number(m.refreshRate) * 100)
@@ -76,6 +80,7 @@ Item {
     closeEditor()
     if (unchanged) return
     if (field === "nightlight") { nightLightRequested(output, value); return }
+    if (field === "rotation") { settingRequested("rotate", output, value); return }
     // Mode selections include the exact advertised fractional refresh string.
     settingRequested(field === "scale" ? "scale-trial" : "mode", output, value)
   }
@@ -106,18 +111,28 @@ Item {
       readonly property var nightLight: modelData.nightLight || ({})
       readonly property color temperatureTint: nightLight.active ? "#d88a35" : "#428ac3"
       readonly property bool selected: gallery.cursorIndex === index
-      readonly property bool editing: gallery.editorOutput === modelData.output && gallery.editorField !== "nightlight"
+      readonly property bool editing: gallery.editorOutput === modelData.output && !gallery.popupEditor
       readonly property bool nightEditing: gallery.editorOutput === modelData.output && gallery.editorField === "nightlight"
+      readonly property bool rotationEditing: gallery.editorOutput === modelData.output && gallery.editorField === "rotation"
+      readonly property int turn: Model.rotationDegrees(modelData.liveTransform)
+      // Narrow (portrait) screens stack their controls in one column.
+      readonly property bool compact: box.width < Style.space(190)
+      // Morph the illustration only when its orientation changes, never on resize.
+      onTurnChanged: morph.restart()
+      Timer { id: morph; interval: 420 }
       readonly property bool confirming: gallery.pending !== null && gallery.pending.output === modelData.output
       readonly property bool canToggle: !gallery.busy && !gallery.stale && (!modelData.usable || gallery.enabledCount > 1)
-      x: Style.space(12) + box.x
+      x: Style.space(12) + (box.slotX === undefined ? box.x : box.slotX)
       y: Style.space(14) + box.y
-      width: box.width
+      width: box.slotWidth === undefined ? box.width : box.slotWidth
       height: box.height + Style.space(94)
+      Behavior on x { enabled: morph.running; NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+      Behavior on y { enabled: morph.running; NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+      Behavior on width { enabled: morph.running; NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
       onSelectedChanged: if (selected) gallery.cursorItemChanged(card)
 
       Rectangle {
-        x: Style.space(2)
+        x: bezel.x + Style.space(2)
         y: Style.space(4)
         width: bezel.width
         height: bezel.height
@@ -127,15 +142,15 @@ Item {
 
       Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
-        y: card.box.height - Style.space(1)
-        width: card.width * 0.12
+        y: bezel.height - Style.space(1)
+        width: bezel.width * (card.turn % 180 ? 0.2 : 0.12)
         height: Style.space(14)
         color: Util.alpha(gallery.foreground, 0.24)
       }
       Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
-        y: card.box.height + Style.space(12)
-        width: card.width * 0.36
+        y: bezel.height + Style.space(12)
+        width: bezel.width * (card.turn % 180 ? 0.7 : 0.36)
         height: Style.space(3)
         radius: height / 2
         color: Util.alpha(gallery.foreground, 0.38)
@@ -143,8 +158,13 @@ Item {
 
       Rectangle {
         id: bezel
-        width: parent.width
+        objectName: "bezel-" + card.modelData.output
+        x: card.box.x - (card.box.slotX === undefined ? card.box.x : card.box.slotX)
+        width: card.box.width
         height: card.box.height
+        Behavior on x { enabled: morph.running; NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+        Behavior on width { enabled: morph.running; NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+        Behavior on height { enabled: morph.running; NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
         radius: Style.space(8)
         gradient: Gradient {
           GradientStop { position: 0; color: Qt.tint(Color.background, Util.alpha("#ffffff", 0.24)) }
@@ -259,16 +279,19 @@ Item {
               }
             }
 
-            Row {
+            Grid {
+              id: specificationRow
               objectName: "specification-row-" + card.modelData.output
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.bottom: parent.bottom
               anchors.margins: Style.space(4)
+              columns: card.compact ? 1 : 2
               spacing: Style.space(5)
+              readonly property real cellWidth: card.compact ? width : (width - spacing) / 2
               SettingChip {
                 objectName: "refresh-" + card.modelData.output
-                width: (parent.width - parent.spacing) / 2
+                width: specificationRow.cellWidth
                 text: Model.formatRefreshRate(card.modelData.enabled ? card.modelData.refreshRate : Number(String(card.modelData.mode).split("@")[1])) + " Hz"
                 fontFamily: gallery.fontFamily
                 foreground: gallery.foreground
@@ -278,7 +301,7 @@ Item {
               }
               SettingChip {
                 objectName: "scale-" + card.modelData.output
-                width: (parent.width - parent.spacing) / 2
+                width: specificationRow.cellWidth
                 text: Math.round(Number(card.modelData.scale || card.modelData.configuredScale || 1) * 1000) / 10 + "%"
                 fontFamily: gallery.fontFamily
                 foreground: gallery.foreground
@@ -356,17 +379,21 @@ Item {
               spacing: Style.space(4)
               Text {
                 width: parent.width
-                text: gallery.pending && gallery.pending.reverting ? "Restoring…" : "Keep these settings?"
+                text: gallery.pending && gallery.pending.reverting ? "Restoring…"
+                  : gallery.pending && gallery.pending.kind === "rotation" ? "Keep this rotation?" : "Keep these settings?"
                 wrapMode: Text.WordWrap
                 horizontalAlignment: Text.AlignHCenter
                 color: gallery.foreground
                 font.family: gallery.fontFamily
                 font.pixelSize: Style.font.caption
               }
-              Row {
+              Grid {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Style.space(4)
+                columns: revertChip.implicitWidth + keepChip.implicitWidth + spacing <= parent.width ? 2 : 1
+                horizontalItemAlignment: Grid.AlignHCenter
                 SettingChip {
+                  id: revertChip
                   text: "Revert " + gallery.seconds + "s"
                   chevron: false
                   fontFamily: gallery.fontFamily
@@ -375,6 +402,7 @@ Item {
                   onClicked: gallery.confirmRequested(false)
                 }
                 SettingChip {
+                  id: keepChip
                   text: "Keep"
                   chevron: false
                   fontFamily: gallery.fontFamily
@@ -391,12 +419,174 @@ Item {
 
         Text {
           anchors.left: parent.left
+          anchors.right: rotateButton.left
+          anchors.rightMargin: Style.space(4)
           anchors.bottom: parent.bottom
           anchors.margins: Style.space(8)
-          text: card.focusedDisplay ? "●  Focused" : card.modelData.usable ? "Click display to focus" : ""
+          text: card.focusedDisplay ? (card.compact ? "●" : "●  Focused")
+            : card.modelData.usable && !card.compact ? "Click display to focus" : ""
+          elide: Text.ElideRight
           color: card.focusedDisplay ? Color.accent : Util.alpha(gallery.foreground, 0.94)
           font.family: gallery.fontFamily
           font.pixelSize: Style.font.caption
+        }
+
+        // Rotation lives on the chin, like a monitor's own hardware button.
+        Rectangle {
+          id: rotateButton
+          property alias popup: rotationPopup
+          objectName: "rotation-" + card.modelData.output
+          readonly property bool hot: rotatePointer.containsMouse || card.rotationEditing
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          anchors.rightMargin: Style.space(5)
+          anchors.bottomMargin: Style.space(3)
+          width: rotateRow.implicitWidth + Style.space(12)
+          height: Style.space(19)
+          radius: height / 2
+          enabled: !gallery.busy && !gallery.stale && card.modelData.usable
+          opacity: enabled ? 1 : 0.5
+          color: Util.alpha(gallery.foreground, hot ? 0.16 : 0.07)
+          border.width: 1
+          border.color: hot ? Util.alpha(Color.accent, 0.75) : Util.alpha(gallery.foreground, 0.2)
+          Behavior on color { ColorAnimation { duration: 130 } }
+          Accessible.role: Accessible.Button
+          Accessible.name: "Rotate " + (card.modelData.alias || card.modelData.output)
+          Accessible.onPressAction: if (enabled) rotatePointer.clicked(null)
+          Row {
+            id: rotateRow
+            anchors.centerIn: parent
+            spacing: Style.space(4)
+            OrientationGlyph {
+              anchors.verticalCenter: parent.verticalCenter
+              size: Style.space(12)
+              angle: Model.rotationGlyphAngle(card.turn)
+              color: rotateButton.hot ? Color.accent : Util.alpha(gallery.foreground, 0.9)
+            }
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              visible: !card.compact || card.turn !== 0
+              text: card.turn + "°"
+              color: rotateButton.hot ? Color.accent : Util.alpha(gallery.foreground, 0.9)
+              font.family: gallery.fontFamily
+              font.pixelSize: Style.font.caption
+              font.weight: Font.Medium
+            }
+          }
+          MouseArea {
+            id: rotatePointer
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: card.rotationEditing ? gallery.closeEditor() : gallery.openEditor(card.index, "rotation")
+            onContainsMouseChanged: if (containsMouse) gallery.cursorRequested(card.index)
+          }
+          Controls.ToolTip {
+            visible: rotatePointer.containsMouse && !card.rotationEditing
+            delay: 500
+            text: "Rotate display (O)"
+            contentItem: Text { text: "Rotate display (O)"; color: Color.foreground; font.family: gallery.fontFamily; font.pixelSize: Style.font.caption }
+            background: Rectangle { radius: Style.space(7); color: Color.background; border.color: Util.alpha(Color.foreground, 0.2) }
+          }
+
+          Controls.Popup {
+            id: rotationPopup
+            objectName: "rotation-popup-" + card.modelData.output
+            readonly property var overlayItem: Controls.Overlay.overlay
+            readonly property real roomBelow: visible && overlayItem
+              ? overlayItem.height - rotateButton.mapToItem(overlayItem, 0, rotateButton.height).y - Style.space(8)
+              : implicitHeight + Style.space(4)
+            y: roomBelow >= implicitHeight + Style.space(4)
+              ? rotateButton.height + Style.space(4) : -implicitHeight - Style.space(4)
+            margins: Style.space(8)
+            width: Style.space(236)
+            x: rotateButton.width - width
+            padding: Style.space(6)
+            visible: card.rotationEditing
+            closePolicy: Controls.Popup.CloseOnEscape | Controls.Popup.CloseOnPressOutside
+            onClosed: if (card.rotationEditing) gallery.closeEditor()
+            background: Rectangle {
+              color: Color.background
+              radius: Style.space(10)
+              border.color: Util.alpha(gallery.foreground, 0.25)
+            }
+            contentItem: Column {
+              spacing: Style.space(3)
+              Repeater {
+                model: card.rotationEditing ? gallery.choices : []
+                Rectangle {
+                  id: option
+                  required property var modelData
+                  required property int index
+                  readonly property bool current: index === gallery.editorInitialIndex
+                  readonly property bool cursor: index === gallery.editorIndex
+                  objectName: "rotation-option-" + modelData.value
+                  width: rotationPopup.availableWidth
+                  height: Style.space(34)
+                  radius: Style.space(8)
+                  color: Util.alpha(gallery.foreground, cursor ? 0.14 : current ? 0.08 : 0.035)
+                  border.width: 1
+                  border.color: cursor ? Util.alpha(Color.accent, 0.7) : Util.alpha(gallery.foreground, current ? 0.22 : 0.1)
+                  Behavior on color { ColorAnimation { duration: 110 } }
+                  Accessible.role: Accessible.Button
+                  Accessible.name: modelData.label
+                  Item {
+                    id: optionGlyph
+                    anchors.left: parent.left
+                    anchors.leftMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(22)
+                    height: width
+                    OrientationGlyph {
+                      anchors.centerIn: parent
+                      size: parent.width
+                      angle: Model.rotationGlyphAngle(option.modelData.degrees)
+                      color: option.current || option.cursor ? Color.accent : Util.alpha(gallery.foreground, 0.85)
+                    }
+                  }
+                  Text {
+                    anchors.left: optionGlyph.right
+                    anchors.leftMargin: Style.space(10)
+                    anchors.right: optionDetail.left
+                    anchors.rightMargin: Style.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: option.modelData.label
+                    elide: Text.ElideRight
+                    color: gallery.foreground
+                    font.family: gallery.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.weight: option.current ? Font.DemiBold : Font.Normal
+                  }
+                  Text {
+                    id: optionDetail
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(9)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: option.current ? "✓" : option.modelData.detail
+                    color: option.current ? Color.accent : Util.alpha(gallery.foreground, 0.6)
+                    font.family: gallery.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onContainsMouseChanged: if (containsMouse) gallery.editorIndex = option.index
+                    onClicked: { gallery.editorIndex = option.index; gallery.applyEditor() }
+                  }
+                }
+              }
+              Text {
+                width: rotationPopup.availableWidth
+                topPadding: Style.space(3)
+                text: "You'll have 20 seconds to keep it."
+                horizontalAlignment: Text.AlignHCenter
+                color: Util.alpha(gallery.foreground, 0.55)
+                font.family: gallery.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+          }
         }
       }
       SettingChip {
@@ -404,7 +594,7 @@ Item {
         property alias popup: nightPopup
         objectName: "nightlight-" + card.modelData.output
         anchors.horizontalCenter: parent.horizontalCenter
-        y: card.box.height + Style.space(55)
+        y: bezel.height + Style.space(55)
         width: Math.min(implicitWidth, card.width)
         text: card.nightLight.active ? "Night Light · " + card.nightLight.temperature + " K"
           : card.nightLight.enabled ? "Night Light · saved" : "Night Light · Off"
@@ -458,7 +648,7 @@ Item {
       MonitorPowerToggle {
         objectName: "power-" + card.modelData.output
         anchors.horizontalCenter: parent.horizontalCenter
-        y: card.box.height + Style.space(22)
+        y: bezel.height + Style.space(22)
         checked: card.modelData.enabled
         pending: gallery.pendingPowerOutput === card.modelData.output
         requestedOn: gallery.pendingPowerOn

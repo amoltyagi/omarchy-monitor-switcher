@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.2.0 — Monitor rotation — 2026-09-25
+
+- Rotate any active display from a small button on its chin, or press `O`.
+  A popup offers Landscape, Portrait (turned right or left) and Upside down,
+  each with an orientation glyph; the current choice is checked.
+- Every rotation is a verified 20-second Keep/Revert trial, from the panel or
+  the new `monitor-switcher rotate <id> <0|90|180|270|next|prev|t0–t7>` verb.
+  Revert restores config, generated rules and positions byte for byte.
+- Pivot-stand reflow: a turned screen keeps its row/column edge and centres on
+  the other axis; neighbours slide to stay touching. Other layouts pivot about
+  the centre or take the nearest free touching edge. Impossible layouts are
+  refused before any change. Half turns move nothing; mirroring is preserved.
+- Portrait cards keep true proportions in a readable slot. Their refresh and
+  scale controls stack; the card animates when its orientation changes.
+- Arrange, returning-display placement and rotation share one connectivity
+  check and one nearest-free-edge search.
+- Narrow portrait tiles in Arrange show just their name instead of spilling
+  the "Click to select" hint outside the tile.
+- Fresh high-DPI MSI artwork: management hero, rotation menu and arrangement,
+  with the Night Light menu linked.
+- Tests: rotation trials, keep/revert, row/column/L-shaped reflow, value
+  parsing and refusals (backend); portrait gallery geometry and rotation
+  model (Node); chin popup targeting, upward opening and portrait control
+  spacing (QML). Verified live on the Acer at 90° and 270°.
+
 ## 3.1.3 — Apps re-layout after display changes — 2026-09-20
 
 - Windows on a monitor that was just enabled, re-scaled or repositioned now

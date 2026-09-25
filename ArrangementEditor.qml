@@ -122,8 +122,10 @@ Column {
           }
           Text {
             width: parent.width
-            visible: parent.parent.height > Style.space(55)
+            // Narrow (portrait) tiles show only their name; never spill outside.
+            visible: parent.parent.height > Style.space(55) && implicitWidth <= parent.width
             text: display.selected ? "Drag to position" : "Click to select"
+            elide: Text.ElideRight
             horizontalAlignment: Text.AlignHCenter
             color: Util.alpha(Color.foreground, 0.88)
             font.family: editor.fontFamily

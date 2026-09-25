@@ -183,37 +183,110 @@ function physicalSize(display) {
   return Number(display.transform || 0) % 2 ? { width: h, height: w } : { width: w, height: h }
 }
 
+// A portrait illustration may be narrower than the controls beneath it, down
+// to this fraction of the minimum card width; its screen uses a compact layout.
+var PORTRAIT_MINIMUM_FRACTION = 0.62
+
 // One shared physical-to-UI factor per gallery. Reduce columns rather than
 // shrinking embedded controls into unreadable labels on narrow panels.
+// Each card occupies a slot at least minimumWidth wide, so a portrait screen
+// keeps its true proportions while the controls below it stay readable.
+// Boxes: {x, y, width, height} is the illustration; {slotX, slotWidth} the card.
 function galleryLayout(monitors, width, gap, minimumWidth, maximumHeight, footerHeight, minimumHeight) {
   if (!monitors.length || width <= 0) return { boxes: [], height: 0 }
   var sizes = monitors.map(physicalSize)
+  var slotMinimum = Math.min(minimumWidth, width)
+  function slot(s, f) { return Math.max(s.width * f, slotMinimum) }
+  function rowWidth(group, f) {
+    return group.reduce(function(n, s) { return n + slot(s, f) }, 0) + gap * (group.length - 1)
+  }
+  // Largest factor for which a row fits: exact, since each slot is either
+  // proportional or pinned at the minimum. Pin slots until the set is stable.
+  function rowFactor(group) {
+    var pinned = group.map(function() { return false })
+    for (;;) {
+      var free = 0, fixed = gap * (group.length - 1)
+      group.forEach(function(s, i) { if (pinned[i]) fixed += slotMinimum; else free += s.width })
+      if (free <= 0) return Infinity
+      var f = Math.max(0, (width - fixed) / free), changed = false
+      group.forEach(function(s, i) { if (!pinned[i] && s.width * f < slotMinimum) { pinned[i] = true; changed = true } })
+      if (!changed) return f
+    }
+  }
+  var tallest = Math.max.apply(null, sizes.map(function(s) { return s.height }))
+  // A portrait beside landscapes makes the shared factor height-bound; allow
+  // extra height (bounded) so landscape screens keep room for their controls.
+  var landscapeHeights = sizes.filter(function(s) { return s.width >= s.height }).map(function(s) { return s.height })
+  var heightCap = maximumHeight
+  if (minimumHeight && landscapeHeights.length && landscapeHeights.length < sizes.length)
+    heightCap = Math.min(maximumHeight * 1.5, Math.max(maximumHeight, minimumHeight * tallest / Math.min.apply(null, landscapeHeights)))
+  var heightFactor = heightCap / tallest
   var columns = Math.min(3, monitors.length), factor = 1
   while (columns >= 1) {
-    factor = Infinity
-    for (var start = 0; start < sizes.length; start += columns) {
-      var group = sizes.slice(start, start + columns)
-      var total = group.reduce(function(n, s) { return n + s.width }, 0)
-      factor = Math.min(factor, (width - gap * (group.length - 1)) / total)
-    }
-    factor = Math.min(factor, maximumHeight / Math.max.apply(null, sizes.map(function(s) { return s.height })))
-    if (columns === 1 || sizes.every(function(s) { return s.width * factor >= minimumWidth && s.height * factor >= (minimumHeight || 0) })) break
+    factor = heightFactor
+    for (var start = 0; start < sizes.length; start += columns)
+      factor = Math.min(factor, rowFactor(sizes.slice(start, start + columns)))
+    var fits = true
+    for (var r = 0; r < sizes.length; r += columns)
+      if (rowWidth(sizes.slice(r, r + columns), 0) > width + 0.001) fits = false
+    var roomy = fits && sizes.every(function(s) {
+      var minimum = s.height > s.width ? minimumWidth * PORTRAIT_MINIMUM_FRACTION : minimumWidth
+      return s.width * factor >= minimum && s.height * factor >= (minimumHeight || 0)
+    })
+    // Fewer columns only help when width limits the factor.
+    if (columns === 1 || roomy || (fits && factor >= heightFactor)) break
     columns--
   }
   var footer = footerHeight === undefined ? gap * 2 : footerHeight
-  var rowHeight = Math.max.apply(null, sizes.map(function(s) { return s.height * factor })) + footer
+  var rowHeight = tallest * factor + footer
   var boxes = []
   for (var row = 0; row * columns < sizes.length; row++) {
     var first = row * columns, count = Math.min(columns, sizes.length - first)
-    var rowWidth = sizes.slice(first, first + count).reduce(function(n, s) { return n + s.width * factor }, 0) + gap * (count - 1)
-    var x = (width - rowWidth) / 2
+    var x = (width - rowWidth(sizes.slice(first, first + count), factor)) / 2
     for (var i = first; i < first + count; i++) {
-      var w = sizes[i].width * factor, h = sizes[i].height * factor
-      boxes.push({ x: x, y: row * rowHeight + rowHeight - footer - h, width: w, height: h })
-      x += w + gap
+      var w = Math.min(width, sizes[i].width * factor), h = sizes[i].height * factor, sw = slot(sizes[i], factor)
+      boxes.push({ x: x + (sw - w) / 2, y: Math.max(0, row * rowHeight + rowHeight - footer - h), width: w, height: h,
+        slotX: x, slotWidth: sw })
+      x += sw + gap
     }
   }
   return { boxes: boxes, height: Math.ceil(sizes.length / columns) * rowHeight }
+}
+
+// Rotation. Hyprland/wl_output transforms 0–3 turn the desktop in 90° steps;
+// 4–7 add mirroring and are kept (never offered) by the panel.
+// ROTATION_90_TURNS names the physical direction a monitor is turned for
+// transform 1, as verified on real hardware.
+var ROTATION_90_TURNS = "right"
+
+function rotationDegrees(transform) {
+  return (Number(transform || 0) & 3) * 90
+}
+
+function rotationLabel(degrees) {
+  var d = Number(degrees) % 360
+  var other = ROTATION_90_TURNS === "left" ? "right" : "left"
+  if (d === 90) return "Portrait · turned " + ROTATION_90_TURNS
+  if (d === 180) return "Landscape · upside down"
+  if (d === 270) return "Portrait · turned " + other
+  return "Landscape · standard"
+}
+
+function rotationChoices() {
+  return [0, 90, 180, 270].map(function(d) {
+    return { label: rotationLabel(d), detail: d + "°", value: String(d), degrees: d }
+  })
+}
+
+// On-screen angle (Qt: positive is clockwise) for a monitor glyph turned the
+// way the physical monitor is turned for this rotation, in (-180, 180].
+function rotationGlyphAngle(degrees) {
+  var d = ((Number(degrees) || 0) % 360 + 360) % 360
+  var sign = ROTATION_90_TURNS === "left" ? -1 : 1
+  if (d === 180) return 180
+  if (d === 90) return sign * 90
+  if (d === 270) return -sign * 90
+  return 0
 }
 
 function resolutionChoices(display) {
@@ -236,6 +309,7 @@ function cardChoices(display, field) {
     {label: "Warmer · 3500 K", value: "3500"},
     {label: "Amber · 2500 K", value: "2500"}
   ]
+  if (field === 'rotation') return rotationChoices()
   if (field === 'mode') return resolutionChoices(display)
   if (field === 'refresh') return (display.availableModes || [])
     .filter(function(m) { return m.width === size.width && m.height === size.height })
@@ -257,6 +331,7 @@ function settingIsCurrent(display, field, value) {
     return value === 'off' ? !state.enabled : state.active && Number(value) === state.temperature
   }
   if (field === 'scale') return Math.abs(Number(value) - Number(display.scale)) < 0.0001
+  if (field === 'rotation') return Number(value) === rotationDegrees(display.liveTransform)
   var mode = /^(\d+)x(\d+)@([\d.]+)$/.exec(String(value))
   return !!mode && Number(mode[1]) === Number(display.width) && Number(mode[2]) === Number(display.height)
     && Math.round(Number(mode[3]) * 100) === Math.round(Number(display.refreshRate) * 100)
@@ -376,6 +451,12 @@ if (typeof module !== "undefined") {
     displayDimensions: displayDimensions,
     physicalSize: physicalSize,
     galleryLayout: galleryLayout,
+    PORTRAIT_MINIMUM_FRACTION: PORTRAIT_MINIMUM_FRACTION,
+    ROTATION_90_TURNS: ROTATION_90_TURNS,
+    rotationDegrees: rotationDegrees,
+    rotationLabel: rotationLabel,
+    rotationChoices: rotationChoices,
+    rotationGlyphAngle: rotationGlyphAngle,
     resolutionChoices: resolutionChoices,
     cardChoices: cardChoices,
     settingIsCurrent: settingIsCurrent,
