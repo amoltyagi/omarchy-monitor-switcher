@@ -1,10 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="2033" height="1050" viewBox="0 0 2033 1050">
-  <defs><clipPath id="panel"><rect x="20" y="112" width="1993" height="918" rx="38"/></clipPath></defs>
-  <rect width="2033" height="1050" fill="#0b0c15"/>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="3140" height="1068" viewBox="0 0 3140 1068">
+  <!-- Real MSI desktop (3840x2160, 187.5%) with the plugin open; bullets sit in the free space. -->
+  <defs>
+    <linearGradient id="shade" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#070a14" stop-opacity="0.9"/>
+      <stop offset="0.3" stop-color="#070a14" stop-opacity="0.82"/>
+      <stop offset="0.36" stop-color="#070a14" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#070a14" stop-opacity="0.25"/>
+    </linearGradient>
+    <filter id="lift" x="-10%" y="-10%" width="120%" height="130%"><feGaussianBlur stdDeviation="26"/></filter>
+  </defs>
+  <image x="0" y="0" width="3140" height="1068" xlink:href="screenshots/desktop-arrangement.jpg"/>
+  <rect x="0" y="45" width="3140" height="1023" fill="url(#shade)"/>
+  <rect x="1137" y="72" width="1993" height="924" rx="38" fill="#000" fill-opacity="0.55" filter="url(#lift)"/>
+  <image x="1137" y="54" width="1993" height="924" xlink:href="screenshots/arrangement.png"/>
   <g font-family="Liberation Sans, Arial, sans-serif">
-    <text x="28" y="47" fill="#d4edf5" font-size="39" font-weight="700">Arrange your desk.</text>
-    <text x="28" y="84" fill="#a8bac3" font-size="26">Portrait or landscape: drag, snap, preview, then apply.</text>
-    <text x="2005" y="48" text-anchor="end" fill="#7ae99c" font-size="23">MONITOR SWITCHER</text>
+    <text x="96" y="210" fill="#ffffff" font-size="96" font-weight="700">Arrange</text>
+    <text x="96" y="314" fill="#fa9e5f" font-size="96" font-weight="700">your desk.</text>
+    <circle cx="108" cy="446" r="9" fill="#fa9e5f"/><text x="142" y="460" font-size="42"><tspan fill="#ffffff" font-weight="700">Drag &amp; snap</tspan></text><text x="142" y="512" font-size="33" fill="#d6dde6">portrait and landscape screens</text><circle cx="108" cy="578" r="9" fill="#fa9e5f"/><text x="142" y="592" font-size="42"><tspan fill="#ffffff" font-weight="700">Or place</tspan></text><text x="142" y="644" font-size="33" fill="#d6dde6">left, right, above or below</text><circle cx="108" cy="710" r="9" fill="#fa9e5f"/><text x="142" y="724" font-size="42"><tspan fill="#ffffff" font-weight="700">Preview</tspan></text><text x="142" y="776" font-size="33" fill="#d6dde6">then apply with 20 s Keep/Revert</text><circle cx="108" cy="842" r="9" fill="#fa9e5f"/><text x="142" y="856" font-size="42"><tspan fill="#ffffff" font-weight="700">Guarded</tspan></text><text x="142" y="908" font-size="33" fill="#d6dde6">overlaps and gaps are refused</text>
+    <text x="96" y="1008" fill="#9fb0c0" font-size="28" letter-spacing="5" font-weight="700">MONITOR DESK · OMARCHY</text>
   </g>
-  <image x="20" y="112" width="1993" height="918" clip-path="url(#panel)" xlink:href="screenshots/arrangement.png"/>
 </svg>

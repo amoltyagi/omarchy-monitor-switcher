@@ -1,10 +1,12 @@
-# Monitor Switcher 3.2 — Rotation
+# Monitor Desk 3.2 — Rotation
+
+*Formerly Monitor Switcher. Same plugin ID, commands and settings.*
 
 Your displays. One place. Now in portrait, too.
 
 Manage resolution, refresh rate, scale, rotation, power and desktop layout from one panel.
 
-![Monitor Switcher panel with MSI and LG in landscape and the Acer in portrait](preview.png)
+![Monitor Desk on an Omarchy desktop: MSI and LG in landscape, the Acer in portrait](preview.png)
 
 ## Turn it portrait
 

@@ -1,10 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="2033" height="1156" viewBox="0 0 2033 1156">
-  <defs><clipPath id="panel"><rect x="20" y="112" width="1993" height="1024" rx="38"/></clipPath></defs>
-  <rect width="2033" height="1156" fill="#0b0c15"/>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="3140" height="1282" viewBox="0 0 3140 1282">
+  <!-- Real MSI desktop (3840x2160, 187.5%) with the plugin open; bullets sit in the free space. -->
+  <defs>
+    <linearGradient id="shade" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#070a14" stop-opacity="0.9"/>
+      <stop offset="0.3" stop-color="#070a14" stop-opacity="0.82"/>
+      <stop offset="0.36" stop-color="#070a14" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#070a14" stop-opacity="0.25"/>
+    </linearGradient>
+    <filter id="lift" x="-10%" y="-10%" width="120%" height="130%"><feGaussianBlur stdDeviation="26"/></filter>
+  </defs>
+  <image x="0" y="0" width="3140" height="1282" xlink:href="screenshots/desktop-rotation.jpg"/>
+  <rect x="0" y="45" width="3140" height="1237" fill="url(#shade)"/>
+  <rect x="1137" y="72" width="1993" height="1138" rx="38" fill="#000" fill-opacity="0.55" filter="url(#lift)"/>
+  <image x="1137" y="54" width="1993" height="1138" xlink:href="screenshots/rotation.png"/>
   <g font-family="Liberation Sans, Arial, sans-serif">
-    <text x="28" y="47" fill="#d4edf5" font-size="39" font-weight="700">Turn it portrait.</text>
-    <text x="28" y="84" fill="#a8bac3" font-size="26">One click on the chin. Neighbours slide to stay touching. Keep it, or it reverts in 20 s.</text>
-    <text x="2005" y="48" text-anchor="end" fill="#7ae99c" font-size="23">MONITOR SWITCHER</text>
+    <text x="96" y="290" fill="#ffffff" font-size="96" font-weight="700">Turn it</text>
+    <text x="96" y="394" fill="#fa9e5f" font-size="96" font-weight="700">portrait.</text>
+    <rect x="96" y="118" width="250" height="56" rx="28" fill="#fa9e5f"/><text x="221" y="156" text-anchor="middle" fill="#1a1206" font-size="27" font-weight="700" letter-spacing="2">NEW IN 3.2</text><circle cx="108" cy="486" r="9" fill="#fa9e5f"/><text x="142" y="500" font-size="42"><tspan fill="#ffffff" font-weight="700">One click</tspan></text><text x="142" y="552" font-size="33" fill="#d6dde6">on the monitor’s chin, or press O</text><circle cx="108" cy="636" r="9" fill="#fa9e5f"/><text x="142" y="650" font-size="42"><tspan fill="#ffffff" font-weight="700">Four ways</tspan></text><text x="142" y="702" font-size="33" fill="#d6dde6">landscape, portrait left or right, upside down</text><circle cx="108" cy="786" r="9" fill="#fa9e5f"/><text x="142" y="800" font-size="42"><tspan fill="#ffffff" font-weight="700">Neighbours slide</tspan></text><text x="142" y="852" font-size="33" fill="#d6dde6">so your pointer still crosses cleanly</text><circle cx="108" cy="936" r="9" fill="#fa9e5f"/><text x="142" y="950" font-size="42"><tspan fill="#ffffff" font-weight="700">Safe</tspan></text><text x="142" y="1002" font-size="33" fill="#d6dde6">keep it, or it reverts in 20 seconds</text><circle cx="108" cy="1086" r="9" fill="#fa9e5f"/><text x="142" y="1100" font-size="42"><tspan fill="#ffffff" font-weight="700">Scriptable</tspan></text><text x="142" y="1152" font-size="33" fill="#d6dde6">monitor-switcher rotate 3 90</text>
+    <text x="96" y="1222" fill="#9fb0c0" font-size="28" letter-spacing="5" font-weight="700">MONITOR DESK · OMARCHY</text>
   </g>
-  <image x="20" y="112" width="1993" height="1024" clip-path="url(#panel)" xlink:href="screenshots/rotation.png"/>
 </svg>

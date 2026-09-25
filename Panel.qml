@@ -1,4 +1,4 @@
-// Monitor Switcher: per-screen popup, one authoritative backend snapshot.
+// Monitor Desk (formerly Monitor Switcher): per-screen popup, one authoritative backend snapshot.
 // Originally vendored from Omarchy's monitor panel; see UPSTREAM.md.
 import QtQuick
 import QtQuick.Controls
@@ -440,7 +440,7 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     iconComponent: Component { MonitorLogo { color: button.active && button.useActiveColor ? button.activeColor : button.foreground } }
-    tooltipText: "Monitor Switcher"
+    tooltipText: "Monitor Desk"
     onPressed: function(b) { root.toggle() }
   }
 
@@ -453,7 +453,9 @@ Panel {
     focusTarget: keyCatcher
     borderSpec: Border.flat(Util.alpha(Color.foreground, 0.18), 1)
     contentWidth: panel.fittedContentWidth(Style.space(1160))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(root.shortcutsExpanded ? 820 : 600))
+    // Show the whole panel whenever the screen has room; KeyboardPanel caps it
+    // to the available height, and the ScrollView takes over only beyond that.
+    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher

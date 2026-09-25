@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.2.1 — Monitor Desk — 2026-09-25
+
+- Renamed to **Monitor Desk** (formerly Monitor Switcher). The plugin ID
+  `case.monitor-switcher`, the `monitor-switcher` command, config and state
+  paths, IPC target and shortcuts are unchanged; updating is seamless.
+- The panel opens at its full height whenever the screen has room, so Text
+  size and the shortcut row are no longer hidden below a fixed 600-unit cap.
+  It still scrolls on screens too short to fit it.
+- New artwork: the complete panel on the real MSI desktop (3840×2160,
+  187.5%), with short feature bullets beside it.
+
 ## 3.2.0 — Monitor rotation — 2026-09-25
 
 - Rotate any active display from a small button on its chin, or press `O`.

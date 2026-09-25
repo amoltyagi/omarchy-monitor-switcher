@@ -1,4 +1,4 @@
-# Monitor Switcher
+# Monitor Desk
 
 ## Your displays. One place.
 
@@ -6,9 +6,12 @@ Resolution, refresh rate, scale, **rotation**, power and layout for every
 monitor, in one panel for [Omarchy](https://omarchy.org). Every change is a
 verified before you keep it, and reverts by itself if you don't.
 
+*Formerly **Monitor Switcher**. Same plugin ID (`case.monitor-switcher`),
+commands, settings and shortcuts, so updating is seamless.*
+
 **[Install](#install)** · **[Rotate a display](#rotate-a-display)** · [Use the panel](#use-the-panel) · [Keyboard](#keyboard-controls) · [Command line](#command-line) · [What's new in 3.2](RELEASE-NOTES.md)
 
-<a href="preview.png"><img src="preview.png" alt="Monitor Switcher panel: MSI and LG in landscape, Acer in portrait, with resolution, refresh rate, scale, rotation, power and Night Light on every display." width="1000"></a>
+<a href="preview.png"><img src="preview.png" alt="Monitor Desk open on an Omarchy desktop: MSI and LG in landscape, the Acer in portrait, with resolution, refresh rate, scale, rotation, power, Night Light, brightness and text size." width="1000"></a>
 
 - **Click to edit.** Resolution, refresh and scale sit right on each display.
 - **Turn it portrait.** *New in 3.2:* rotate from the button on each monitor's chin.
@@ -26,7 +29,7 @@ Click the small monitor button on a display's chin (or press `O`), pick an
 orientation, and watch the card turn. Screens next to it slide over so your
 pointer still crosses cleanly. Keep it, or do nothing and it reverts in 20 seconds.
 
-<a href="preview-rotation.png"><img src="preview-rotation.png" alt="Rotation menu opened from the Acer's chin button: Landscape standard, Portrait turned right (checked), Landscape upside down and Portrait turned left, beside the portrait Acer card." width="1000"></a>
+<a href="preview-rotation.png"><img src="preview-rotation.png" alt="Rotation menu opened from the Acer's chin button on an Omarchy desktop: Landscape standard, Portrait turned right (checked), Landscape upside down and Portrait turned left." width="1000"></a>
 
 [How rotation works →](#rotate-a-display)
 
@@ -35,7 +38,7 @@ pointer still crosses cleanly. Keep it, or do nothing and it reverts in 20 secon
 Drag portrait and landscape screens into position, or choose left, right,
 above or below. Preview the layout, apply it, and keep it if it feels right.
 
-<a href="preview-detail.png"><img src="preview-detail.png" alt="Arrangement view: MSI, LG and the portrait Acer as tiles in desktop space, with placement buttons and Apply arrangement." width="1000"></a>
+<a href="preview-detail.png"><img src="preview-detail.png" alt="Arrangement view on an Omarchy desktop: MSI, LG and the portrait Acer as tiles in desktop space, with placement buttons and Apply arrangement." width="1000"></a>
 
 ## Night Light for each monitor.
 
@@ -151,6 +154,9 @@ Descriptions also appear in Omarchy's `SUPER+K` keybindings sheet. Adjust the
 plugin path if you installed it under a different ID.
 
 ## Command line
+
+The plugin ID and command keep their original `monitor-switcher` names, so
+existing keybinds, scripts and configs continue to work.
 
 The executable lives inside the plugin; installation does not add it to `PATH`.
 Use its full path, or enable the short command for the current shell:

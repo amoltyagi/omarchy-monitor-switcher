@@ -290,3 +290,21 @@ The GitHub release attachments are replaced by just the three reviewed previews.
 - README/release images: `preview.png`, `preview-rotation.png`,
   `preview-detail.png`; `night-light.png` linked. `preview-night-light.png`
   was retired (old releases use immutable commit URLs).
+
+## 3.2.1 — Monitor Desk rename and full-height artwork (September 25, 2026)
+
+- Display name only: `manifest.name`, `barWidget.displayName`, bar tooltip,
+  `logo.svg` title, README/release/artwork. ID `case.monitor-switcher`, CLI,
+  config/state paths and IPC target are unchanged: marketplace IDs are
+  permanent, and the ID is also the install directory, `shell.json` entry and
+  keybind path.
+- `Panel.qml` no longer caps content height at 600/820 styled units;
+  `KeyboardPanel.fittedContentHeight` still caps it to the available screen
+  height and the ScrollView scrolls beyond that. On MSI the panel is now 607
+  logical px and shows Text size and the shortcut row.
+- Artwork: each state is one `grim -o DP-3` frame. The panel crop is
+  `(popup.x, popup.y, popup.height) × 1.875` (card origin 1837,54 at
+  x=980,y=29). The desktop crop starts at x=700. SVGs draw the shadow from a
+  blurred rect, so panel pixels stay identical to the capture. Wait for
+  `actionRunning == false` before capture (after a focus action the panel is
+  briefly dimmed). The capture helpers were `/tmp/monitor-fix/cap2.sh`.
