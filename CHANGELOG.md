@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.2.2 — Never boot to a black screen — 2026-10-11
+
+- **Critical fix.** If the only monitor you had left on was unplugged before a
+  reboot, the saved layout still switched every other display off, leaving
+  the session black with no way to reach the panel or a keybind.
+- The saved layout now applies only while at least one of its enabled
+  monitors is physically connected (read from the kernel's DRM connector
+  status, which is available at boot before Hyprland lists its outputs).
+  Otherwise nothing is switched off and every connected display lights up.
+- Hotplug aware: unplugging your only active monitor mid-session brings the
+  others back; plugging it in again restores your saved layout. The check is
+  rebuilt on every reload, so hooks never stack.
+- Output names are validated before they are written into the generated Lua.
+- Existing installs pick up the guard on the next `monitor-switcher apply` or
+  any change made from the panel.
+- Tests: regression test that every generated rule sits inside the guard and
+  hotplug hooks are present. 118/118 pass. Verified live: no config errors,
+  connected/disconnected detection correct for DP-2 and the empty DP-1.
+
 ## 3.2.1 — Monitor Desk — 2026-09-25
 
 - Renamed to **Monitor Desk** (formerly Monitor Switcher). The plugin ID

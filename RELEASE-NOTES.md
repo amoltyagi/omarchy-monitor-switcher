@@ -36,6 +36,13 @@ Night Light per monitor, power toggles, verified recovery and every existing
 setting and shortcut carry forward.
 [See the Night Light menu](assets/screenshots/night-light.png).
 
+**3.2.2 — critical fix: never boot to a black screen.** If the only monitor
+you had switched on was unplugged before a reboot, every other display used to
+stay off. Your saved layout now applies only while one of its monitors is
+connected; otherwise every plugged-in display lights up, and your layout
+returns as soon as that monitor is plugged back in. Update is strongly
+recommended.
+
 Update with:
 
 ```bash

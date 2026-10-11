@@ -308,3 +308,26 @@ The GitHub release attachments are replaced by just the three reviewed previews.
   blurred rect, so panel pixels stay identical to the capture. Wait for
   `actionRunning == false` before capture (after a focus action the panel is
   briefly dimmed). The capture helpers were `/tmp/monitor-fix/cap2.sh`.
+
+## 3.2.2 — Boot guard for unplugged selections (October 11, 2026)
+
+- Bug: `toggles/hypr/monitor-switcher.lua` is re-sourced on every boot and
+  reload, and its `disabled = true` rules were unconditional. With only one
+  monitor selected and that monitor unplugged at boot, every connected
+  display was disabled. Nothing could recover it: the last-display check only
+  runs on toggle, the panel needs a visible screen, and
+  `omarchy-hyprland-monitor-watch` only reloads the same rules.
+- Fix: `guarded_layout()` wraps every `hl.monitor` rule in
+  `if layout_active then … end`. `layout_active` is true when any enabled
+  output's `/sys/class/drm/card<N>-<name>/status` (N = 0..15) reads
+  `connected`. Sysfs is used because at the initial config parse
+  `hl.get_monitors()` is not yet populated and never lists disabled outputs.
+  Unknown names fail open (nothing disabled).
+- `hl.on("monitor.added"/"monitor.removed")` calls `hyprctl reload` only when
+  the sysfs answer differs from the load-time one, so it cannot loop. Lua
+  state is reset on reload (verified: a global set via eval is `nil` after
+  reload), so the hooks never stack.
+- The `wanted` table holds bare quoted names (no `output =`), so the test
+  stub's line parser still sees only the real rules. Output names must match
+  `^[A-Za-z0-9_.-]+$`.
+- Not yet reproduced end-to-end with a physical unplug and reboot.
