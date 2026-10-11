@@ -229,6 +229,23 @@ async function fixture(t, options = {}) {
   };
 }
 
+test('disabled rules are guarded so an unplugged selection can never black out every display', async t => {
+  const f = await fixture(t, { disabled: ['DP-1'] });
+  await f.ok('apply');
+  const lua = await readFile(f.generated, 'utf8');
+  // Only enabled outputs decide whether the layout may switch others off.
+  assert.match(lua, /^local wanted = \{ "DP-2", \}$/m);
+  assert.match(lua, /\/sys\/class\/drm\/card" \.\. card \.\. "-" \.\. name \.\. "\/status"/);
+  // Every hl.monitor rule sits inside the guard; nothing is disabled outside it.
+  const start = lua.indexOf('if layout_active then');
+  const body = lua.slice(start, lua.indexOf('\nend\n', start));
+  assert.equal((lua.match(/hl\.monitor\(/g) || []).length, (body.match(/hl\.monitor\(/g) || []).length);
+  assert.match(body, /output = "DP-1", disabled = true/);
+  // Hotplug in either direction re-evaluates the guard.
+  assert.match(lua, /hl\.on\("monitor\.added", resync\)/);
+  assert.match(lua, /hl\.on\("monitor\.removed", resync\)/);
+});
+
 test('state advertises sorted unique rates at configured resolution, not transient live resolution/Hz', async t => {
   const f = await fixture(t);
   f.live[0].width = 1920;
