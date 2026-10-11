@@ -43,6 +43,10 @@ connected; otherwise every plugged-in display lights up, and your layout
 returns as soon as that monitor is plugged back in. Update is strongly
 recommended.
 
+**3.2.3 — the fix applies itself.** After updating, the panel adds the boot
+guard to your saved layout the first time it loads. Nothing to run, your
+layout is unchanged, and the screen does not flicker.
+
 Update with:
 
 ```bash

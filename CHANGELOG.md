@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.2.3 — Boot guard reaches every install — 2026-10-11
+
+- 3.2.2 only protected a layout once it was regenerated (an `apply` or any
+  panel change), so an updated install that was left alone kept the old,
+  unguarded file and could still boot to a black screen.
+- The panel now upgrades that file automatically when it loads, via the new
+  `monitor-switcher migrate` verb. Your layout is unchanged, and Hyprland is
+  not reloaded; the guard takes effect at the next boot or reload.
+- Conservative by design: a missing or already-guarded file is a no-op, and
+  every line of an old file must match exactly what the generator writes.
+  Anything else (hand edits, unexpected code) is refused and left untouched,
+  so no unrecognised text is ever carried into the new file.
+- Tests: migration of an old layout (rules preserved, no reload, second run
+  byte-identical); guarded, missing, tampered and all-off files left
+  untouched. 120/120 pass. Verified against the real pre-3.2.2 layout from
+  this desk.
+
 ## 3.2.2 — Never boot to a black screen — 2026-10-11
 
 - **Critical fix.** If the only monitor you had left on was unplugged before a

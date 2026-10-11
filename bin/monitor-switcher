@@ -33,6 +33,7 @@
 #   monitor-switcher revert <token>      Restore the previous config and layout
 #   monitor-switcher apply            Regenerate layout from config + reload
 #   monitor-switcher recover          Preview the saved working layout for this monitor set
+#   monitor-switcher migrate          Add the boot guard to a pre-3.2.2 layout (run by the panel)
 #
 #   <id> = output name (DP-3), alias (MSI), or number — the monitor's place
 #   in the pack order, left-to-right (toggle 2). Numbers need no aliases and
@@ -901,6 +902,42 @@ hl.on("monitor.removed", resync)
 LUA
 }
 
+# One-time upgrade of a layout file generated before 3.2.2, which lacks the
+# boot guard. Runs from the panel at load. It is deliberately conservative:
+# - a missing or already-guarded file is left alone (the normal case: a no-op);
+# - the old file is converted line by line, and every rule must exactly match
+#   one of the two shapes the generator writes. Anything else (hand edits,
+#   unexpected code) refuses the migration and leaves the file untouched, so
+#   no unrecognised text is ever carried into the new file;
+# - the layout itself is unchanged, so Hyprland is not reloaded. The guard
+#   takes effect at the next boot or reload, which is when it matters.
+cmd_migrate() {
+  [[ -e $GENERATED_FILE ]] || return 0
+  guard_path "$GENERATED_FILE" || die "refusing unsafe generated layout path"
+  local old line rules="" wanted="" name
+  old=$(safe_read "$GENERATED_FILE") || die "cannot read generated layout"
+  grep -qx 'local layout_active = wanted_connected()' <<<"$old" && return 0
+  local re_name='"([A-Za-z0-9_.-]+)"'
+  local re_off="^hl\\.monitor\\(\\{ output = $re_name, disabled = true \\}\\)\$"
+  local re_on="^hl\\.monitor\\(\\{ output = $re_name, mode = \"([0-9]+x[0-9]+(@[0-9.]+)?|preferred)\", position = \"-?[0-9.]+x-?[0-9.]+\", scale = [0-9.]+, transform = [0-7] \\}\\)\$"
+  while IFS= read -r line; do
+    [[ -z ${line//[[:space:]]/} || $line == --* ]] && continue
+    if [[ $line =~ $re_off ]]; then
+      rules+=$'\n'"$line"
+    elif [[ $line =~ $re_on ]]; then
+      name=${BASH_REMATCH[1]}
+      rules+=$'\n'"$line"
+      wanted+="\"$name\", "
+    else
+      die "generated layout has unrecognised content; not migrating (run 'monitor-switcher apply' to regenerate it)"
+    fi
+  done <<<"$old"
+  [[ -n $rules ]] || return 0
+  [[ -n $wanted ]] || die "generated layout enables no display; not migrating (run 'monitor-switcher apply' to regenerate it)"
+  guarded_layout "$wanted" "$rules" | write_file "$GENERATED_FILE" || die "could not write migrated layout"
+  echo "monitor-switcher: added the boot guard to the saved layout (layout unchanged)" >&2
+}
+
 apply() {
   [[ -s $CONFIG_FILE ]] || seed_config
   local lv cfg boxes collision
@@ -1570,5 +1607,6 @@ case "${1:-}" in
   revert)  [[ $# -eq 2 ]] || usage; restore_refresh "$2" ;;
   recover) cmd_recover ;;
   apply)   apply ;;
+  migrate) cmd_migrate ;;
   *)       usage ;;
 esac

@@ -184,6 +184,7 @@ monitor-switcher confirm <token>         # keep the trial mode
 monitor-switcher revert <token>          # restore previous settings
 monitor-switcher apply                   # apply the saved layout
 monitor-switcher recover                 # try the last verified layout for this monitor set
+monitor-switcher migrate                 # add the boot guard to a pre-3.2.2 layout (the panel does this)
 ```
 
 Refresh requests must match an advertised rate, e.g. `74.98` rather than `75`

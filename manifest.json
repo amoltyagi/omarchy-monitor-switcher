@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "case.monitor-switcher",
   "name": "Monitor Desk",
-  "version": "3.2.2",
+  "version": "3.2.3",
   "author": "amoltyagi",
   "license": "MIT",
   "description": "Manage resolution, refresh rate, scale, rotation, power and desktop layout, with independent Night Light and verified Keep/Revert.",

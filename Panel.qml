@@ -291,7 +291,7 @@ Panel {
     function hide() { root.ipcPanel().close() }
   }
 
-  Component.onCompleted: { PanelRegistry.register(root); refresh() }
+  Component.onCompleted: { PanelRegistry.register(root); migrateProc.running = true; refresh() }
   Component.onDestruction: PanelRegistry.unregister(root)
   readonly property int enabledScreenCount: Quickshell.screens.length
   onEnabledScreenCountChanged: refresh()
@@ -362,6 +362,12 @@ Panel {
       }
       if (again || PanelRegistry.outdated(ticket)) root.refresh()
     }
+  }
+  // One-time, idempotent upgrade of a pre-3.2.2 layout file: adds the boot
+  // guard without changing the layout or reloading Hyprland. A no-op once done.
+  Process {
+    id: migrateProc
+    command: ["bash", "-c", "timeout -k 1 15 \"$1\" migrate > /dev/null 2>&1", "monitor-switcher", root.scriptPath]
   }
   Process {
     id: actionProc

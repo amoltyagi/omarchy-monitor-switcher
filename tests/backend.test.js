@@ -246,6 +246,50 @@ test('disabled rules are guarded so an unplugged selection can never black out e
   assert.match(lua, /hl\.on\("monitor\.removed", resync\)/);
 });
 
+test('migrate adds the boot guard to a pre-3.2.2 layout without changing or reloading it', async t => {
+  const f = await fixture(t);
+  const old = f.originalLua + 'hl.monitor({ output = "DP-2", disabled = true })\n';
+  await writeFile(f.generated, old);
+  const result = await f.ok('migrate');
+  assert.match(result.stderr, /added the boot guard/);
+  const lua = await readFile(f.generated, 'utf8');
+  assert.match(lua, /^local wanted = \{ "DP-1", \}$/m);
+  const start = lua.indexOf('if layout_active then');
+  const body = lua.slice(start, lua.indexOf('\nend\n', start));
+  assert.match(body, /^  hl\.monitor\(\{ output = "DP-1", mode = "3840x2160@60\.00", position = "-1440x100", scale = 1\.5, transform = 1 \}\)$/m);
+  assert.match(body, /^  hl\.monitor\(\{ output = "DP-2", disabled = true \}\)$/m);
+  assert.equal((lua.match(/hl\.monitor\(/g) || []).length, 2);
+  const calls = await readFile(path.join(f.home, 'calls'), 'utf8').catch(() => '');
+  assert.doesNotMatch(calls, /reload/);
+  // Second run is a byte-for-byte no-op.
+  await f.ok('migrate');
+  assert.equal(await readFile(f.generated, 'utf8'), lua);
+});
+
+test('migrate leaves guarded, missing and unrecognised layouts untouched', async t => {
+  const f = await fixture(t);
+  await f.ok('apply');
+  const guarded = await readFile(f.generated, 'utf8');
+  await f.ok('migrate');
+  assert.equal(await readFile(f.generated, 'utf8'), guarded);
+
+  const tampered = f.originalLua + 'os.execute("touch /tmp/pwned")\n';
+  await writeFile(f.generated, tampered);
+  const refused = await f.run('migrate');
+  assert.notEqual(refused.code, 0);
+  assert.match(refused.stderr, /unrecognised content/);
+  assert.equal(await readFile(f.generated, 'utf8'), tampered);
+
+  const allOff = '-- old\nhl.monitor({ output = "DP-1", disabled = true })\n';
+  await writeFile(f.generated, allOff);
+  assert.notEqual((await f.run('migrate')).code, 0);
+  assert.equal(await readFile(f.generated, 'utf8'), allOff);
+
+  await rm(f.generated);
+  await f.ok('migrate');
+  await assert.rejects(readFile(f.generated));
+});
+
 test('state advertises sorted unique rates at configured resolution, not transient live resolution/Hz', async t => {
   const f = await fixture(t);
   f.live[0].width = 1920;

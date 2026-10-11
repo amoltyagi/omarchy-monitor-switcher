@@ -331,3 +331,26 @@ The GitHub release attachments are replaced by just the three reviewed previews.
   stub's line parser still sees only the real rules. Output names must match
   `^[A-Za-z0-9_.-]+$`.
 - Not yet reproduced end-to-end with a physical unplug and reboot.
+
+## 3.2.3 — Automatic boot-guard migration (October 11, 2026)
+
+- Gap in 3.2.2: the guard lives in the generated file, not the plugin code, so
+  updating the plugin left existing unguarded files in place until the next
+  regeneration.
+- `cmd_migrate` (`monitor-switcher migrate`): no file or a file already
+  containing `local layout_active = wanted_connected()` → exit 0 with no
+  write. Otherwise each non-blank, non-`--` line must fully match the
+  disabled rule or the enabled rule (mode `WxH[@Hz]` or `preferred`, numeric
+  position/scale, transform 0–7, name `^[A-Za-z0-9_.-]+$`). Any other line, or
+  no enabled output, → refuse (exit 1) and leave the file untouched. Matched
+  lines are re-emitted through `guarded_layout`. No `hyprctl` call: the
+  layout is identical, and the guard and hotplug hooks take effect at the next
+  boot or reload.
+- Goes through the normal backend lock; while a refresh trial is pending it
+  exits 75 like other layout verbs, and the next panel load retries.
+- `Panel.qml`: `migrateProc` (bounded `timeout -k 1 15`, output discarded) is
+  started from `Component.onCompleted` before the first state refresh. Each
+  panel instance may run it; the lock and idempotence make that harmless.
+- For marketplace review: the only new startup behaviour is this one-time,
+  idempotent rewrite of the plugin's own generated file, using the plugin's
+  existing atomic, symlink-refusing `write_file`.
